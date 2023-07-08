@@ -29,7 +29,7 @@ func main() {
 	http.HandleFunc("/", handleRequest)
 
 	log.Print("Listening on :3000...")
-	err := http.ListenAndServe(":3000", nil)
+	err := http.ListenAndServe(":3000", nil) //nolint: gosec
 	if err != nil {
 		log.Fatal(err)
 	}

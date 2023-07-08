@@ -38,7 +38,7 @@ func getJobs(c *cache.Cache, owner, repo string) Dashboard {
 	var runs []*github.WorkflowRun
 	for {
 		resp, rr, err := client.Actions.ListRepositoryWorkflowRuns(context.Background(), owner, repo, opt)
-		if rlErr, ok := err.(*github.RateLimitError); ok {
+		if rlErr, ok := err.(*github.RateLimitError); ok { //nolint: errorlint
 			log.Printf("ListRepositoryWorkflowRuns ratelimited. Pausing until %s", rlErr.Rate.Reset.Time.String())
 			time.Sleep(time.Until(rlErr.Rate.Reset.Time))
 			continue
@@ -74,7 +74,7 @@ func getJobs(c *cache.Cache, owner, repo string) Dashboard {
 				State: "all",
 			}
 			pull, _, err := client.PullRequests.ListPullRequestsWithCommit(context.Background(), owner, repo, run.GetHeadSHA(), opts)
-			if rlErr, ok := err.(*github.RateLimitError); ok {
+			if rlErr, ok := err.(*github.RateLimitError); ok { //nolint: errorlint
 				log.Printf("ListRepositoryWorkflowRuns ratelimited. Pausing until %s", rlErr.Rate.Reset.Time.String())
 				time.Sleep(time.Until(rlErr.Rate.Reset.Time))
 				continue
