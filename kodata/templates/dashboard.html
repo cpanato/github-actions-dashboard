@@ -1,0 +1,47 @@
+{{define "dashboard"}}
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Github Actions Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"
+      integrity="sha384-9ndCyUaIbzAi2FUVXJi0CjmCapSmO7SnpJef0486qhLnuZ2cdeRhO02iuK6FUUVM" crossorigin="anonymous">
+  </head>
+<body>
+  <div class="container">
+    <div class="row">
+      <div class="col-md-12">
+        <h1>Github Actions Dashboard</h1>
+        <h2>For {{ .Owner }}/{{ .Repo }}</h2>
+        <br>
+      </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
+      integrity="sha384-geWF76RCwLtnZ8qwWowPQNguL3RmwHVBC9FhGdlKrxdiJJigb/j/68SIy3Te4Bkz" crossorigin="anonymous"></script>
+    {{ range $key, $value := .Data }}
+    <table class="table table-bordered">
+      <thead>
+        <tr>
+          <th scope="col">job Name/sha</th>
+          {{range $value }}
+          <th scope="col">{{ .SHA }}</th>
+          {{end}}
+        </tr>
+      </thead>
+      <tbody>
+        <tr scope="row">
+          <td>{{ $key }}</td>
+          {{range $value }}
+          <td class="table-{{ .TableStatus }}"><a href="{{ .JobHTML }}" target=”_blank”>{{ .Status }}/{{ .Conclusion }}</a><br>{{if .PRUrl }}<a href="{{ .PRUrl }}" target=”_blank”>Event Type:{{ .Event }}</a>{{else}}Event Type:{{ .Event }}{{end}}</td>
+          {{end}}
+        </tr>
+      </tbody>
+    </table>
+    <br><br>
+    {{end}}
+    Generated at {{ .DateGenerated }}. Next update at {{ .NextGeneration }}
+  </div>
+</body>
+</html>
+{{end}}

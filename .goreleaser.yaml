@@ -1,0 +1,64 @@
+before:
+  hooks:
+    - go mod tidy
+    - /bin/bash -c 'if [ -n "$(git --no-pager diff --exit-code go.mod go.sum)" ]; then exit 1; fi'
+
+builds:
+  - id: binary
+    main: .
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    goos:
+      - windows
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+      - s390x
+      - 386
+      - mips64le
+      - ppc64le
+      - riscv64
+
+kos:
+  - id: ko-image
+    build: binary
+    main: .
+    base_image: cgr.dev/chainguard/static:latest
+    platforms:
+      - all
+    tags:
+      - '{{ .Tag }}'
+      - '{{ .FullCommit }}'
+      - latest
+    sbom: spdx
+    bare: true
+    preserve_import_paths: false
+    base_import_paths: false
+
+archives:
+  - id: with-version
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'

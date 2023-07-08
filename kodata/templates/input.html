@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Github Actions Dashboard</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"
+    integrity="sha384-9ndCyUaIbzAi2FUVXJi0CjmCapSmO7SnpJef0486qhLnuZ2cdeRhO02iuK6FUUVM" crossorigin="anonymous">
+</head>
+
+<body>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
+      integrity="sha384-geWF76RCwLtnZ8qwWowPQNguL3RmwHVBC9FhGdlKrxdiJJigb/j/68SIy3Te4Bkz" crossorigin="anonymous"></script>
+  <div class="container">
+      <h1>Github Actions Dashboard</h1>
+      <h2>Type your Github Organization and the Repository that you want to check the Actions Dashboard</h2>
+      <br>
+    <form method="POST" action="/">
+      <div class="input-group mb-3">
+        <span class="input-group-text" id="basic-addon1">GitHub Owner/Organization</span>
+        <input name="owner" type="text" class="form-control" placeholder="My GitHub Org" aria-label="Username" aria-describedby="basic-addon1">
+      </div>
+      <div class="input-group mb-3">
+        <span class="input-group-text" id="basic-addon1">GitHub Repository</span>
+        <input name="repo" type="text" class="form-control" placeholder="my GitHub Repo" aria-label="Username" aria-describedby="basic-addon1">
+      </div>
+      <div class="col-12">
+        <button class="btn btn-primary" type="submit">Submit</button>
+      </div>
+    </form>
+  </div>
+</body>
+
+</html>
