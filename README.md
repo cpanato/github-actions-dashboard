@@ -15,7 +15,7 @@ It will show the past 12 hours of GitHub workflows that ran.
 
 ### Screenshots
 
-![home](https://github.com/cpanato/github-actions-dashboard/blob/manin/assets/home.png?raw=true)
+![home](https://github.com/cpanato/github-actions-dashboard/blob/main/assets/home.png?raw=true)
 
 
-![dashboard](https://github.com/cpanato/github-actions-dashboard/blob/manin/assets/dashboard.png?raw=true)
+![dashboard](https://github.com/cpanato/github-actions-dashboard/blob/main/assets/dashboard.png?raw=true)
