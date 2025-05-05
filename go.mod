@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/google/go-github/v53 v53.2.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
-	golang.org/x/oauth2 v0.26.0
+	golang.org/x/oauth2 v0.30.0
 )
 
 require (
