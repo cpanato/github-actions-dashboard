@@ -1,0 +1,31 @@
+{{if .analytics}}
+<div class="bg-white rounded-lg shadow p-6">
+	<h3 class="text-lg font-semibold text-gray-900 mb-4">Overall Statistics</h3>
+	<div class="space-y-3">
+		<div class="flex justify-between items-center">
+			<span class="text-gray-600">Total Runs</span>
+			<span class="text-2xl font-bold text-gray-900">{{.analytics.TotalRuns}}</span>
+		</div>
+		<div class="flex justify-between items-center">
+			<span class="text-gray-600">Success Rate</span>
+			<span class="text-2xl font-bold text-green-600">{{printf "%.1f" .analytics.SuccessRate}}%</span>
+		</div>
+		{{if gt .analytics.AverageDuration 0.0}}
+		<div class="flex justify-between items-center">
+			<span class="text-gray-600">Avg Duration</span>
+			<span class="text-xl font-bold text-blue-600">
+				{{if ge .analytics.AverageDuration 60.0}}
+					{{printf "%.1f min" (divf .analytics.AverageDuration 60.0)}}
+				{{else}}
+					{{printf "%.0f sec" .analytics.AverageDuration}}
+				{{end}}
+			</span>
+		</div>
+		{{end}}
+	</div>
+</div>
+{{else}}
+<div class="bg-white rounded-lg shadow p-6">
+	<div class="text-center text-gray-500">No analytics data available</div>
+</div>
+{{end}}

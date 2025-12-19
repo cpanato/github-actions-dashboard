@@ -1,0 +1,39 @@
+{{if .repositories}}
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+	{{range .repositories}}
+	<div class="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow">
+		<div class="flex items-start justify-between mb-2">
+			<h3 class="text-lg font-semibold text-gray-900 flex-1">
+				<a href="/repository/{{.FullName}}" class="hover:text-blue-600">
+					{{.FullName}}
+				</a>
+			</h3>
+			{{if .DefaultBranch}}
+			<span class="ml-2 px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 rounded">
+				{{.DefaultBranch}}
+			</span>
+			{{end}}
+		</div>
+
+		<div class="grid grid-cols-3 gap-3 text-center mt-4">
+			<div class="bg-green-50 rounded p-2">
+				<div class="text-2xl font-bold text-green-600">{{.TotalRuns}}</div>
+				<div class="text-xs text-gray-600">Total Runs</div>
+			</div>
+			<div class="bg-blue-50 rounded p-2">
+				<div class="text-2xl font-bold text-blue-600">{{printf "%.0f" .SuccessRate}}%</div>
+				<div class="text-xs text-gray-600">Success Rate</div>
+			</div>
+			<div class="bg-red-50 rounded p-2">
+				<div class="text-2xl font-bold text-red-600">{{.FailedRuns}}</div>
+				<div class="text-xs text-gray-600">Failed</div>
+			</div>
+		</div>
+	</div>
+	{{end}}
+</div>
+{{else}}
+<div class="bg-white rounded-lg shadow p-8 text-center">
+	<p class="text-gray-500">No repositories found. Make sure the GitHub App is installed on your repositories.</p>
+</div>
+{{end}}

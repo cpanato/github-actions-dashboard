@@ -1,0 +1,71 @@
+# GitHub Actions Dashboard Configuration Example
+
+server:
+  # Hostname or IP address for the server to listen on
+  address: 0.0.0.0
+  
+  # Port for the server
+  port: 8080
+  
+  # Public URL for the application (used for OAuth callbacks)
+  public_url: "http://localhost:8080"
+
+logging:
+  # Log level: "debug", "info", "warn", "error"
+  level: "info"
+  
+  # Use human-readable text logging instead of JSON
+  text: true
+
+github:
+  web_url: "https://github.com"
+  v3_api_url: "https://api.github.com"
+  
+  app:
+    # GitHub App integration ID
+    integration_id: 123456
+    
+    # Webhook secret for validating payloads
+    webhook_secret: "your-webhook-secret-here"
+    
+    # GitHub App private key (PEM format)
+    # Can also be provided via DASHBOARD_GITHUB_APP_PRIVATE_KEY env var
+    private_key: |
+      -----BEGIN RSA PRIVATE KEY-----
+      ...your private key here...
+      -----END RSA PRIVATE KEY-----
+  
+  oauth:
+    # OAuth client ID
+    client_id: "your-client-id"
+    
+    # OAuth client secret
+    # Can also be provided via DASHBOARD_GITHUB_OAUTH_CLIENT_SECRET env var
+    client_secret: "your-client-secret"
+
+database:
+  # Database connection URL
+  # SQLite: "file:dashboard.db?cache=shared&mode=rwc"
+  # PostgreSQL: "postgres://user:pass@localhost:5432/dashboard?sslmode=disable"
+  url: "file:dashboard.db?cache=shared&mode=rwc"
+  
+  # Connection pool settings
+  max_open_conns: 25
+  max_idle_conns: 5
+
+cache:
+  # How long to cache workflow run data
+  workflow_ttl: "15m"
+  
+  # Maximum number of cache entries
+  max_entries: 10000
+
+options:
+  # Default time window for displaying workflows
+  default_time_window: "12h"
+  
+  # Maximum repositories per page
+  max_repos_per_page: 50
+  
+  # Enable WebSocket for real-time updates
+  enable_realtime: true

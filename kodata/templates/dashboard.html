@@ -1,47 +1,81 @@
-{{define "dashboard"}}
-<!doctype html>
+<!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Github Actions Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"
-      integrity="sha384-9ndCyUaIbzAi2FUVXJi0CjmCapSmO7SnpJef0486qhLnuZ2cdeRhO02iuK6FUUVM" crossorigin="anonymous">
-  </head>
-<body>
-  <div class="container">
-    <div class="row">
-      <div class="col-md-12">
-        <h1>Github Actions Dashboard</h1>
-        <h2>For {{ .Owner }}/{{ .Repo }}</h2>
-        <br>
-      </div>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
-      integrity="sha384-geWF76RCwLtnZ8qwWowPQNguL3RmwHVBC9FhGdlKrxdiJJigb/j/68SIy3Te4Bkz" crossorigin="anonymous"></script>
-    {{ range $key, $value := .Data }}
-    <table class="table table-bordered">
-      <thead>
-        <tr>
-          <th scope="col">job Name/sha</th>
-          {{range $value }}
-          <th scope="col">{{ .SHA }}</th>
-          {{end}}
-        </tr>
-      </thead>
-      <tbody>
-        <tr scope="row">
-          <td>{{ $key }}</td>
-          {{range $value }}
-          <td class="table-{{ .TableStatus }}"><a href="{{ .JobHTML }}" target=”_blank”>{{ .Status }}/{{ .Conclusion }}</a><br>{{if .PRUrl }}<a href="{{ .PRUrl }}" target=”_blank”>Event Type:{{ .Event }}</a>{{else}}Event Type:{{ .Event }}{{end}}</td>
-          {{end}}
-        </tr>
-      </tbody>
-    </table>
-    <br><br>
-    {{end}}
-    Generated at {{ .DateGenerated }}. Next update at {{ .NextGeneration }}
-  </div>
+<head>
+	<title>GitHub Actions Dashboard</title>
+	<script src="https://unpkg.com/htmx.org@1.9.10"></script>
+	<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+	<div class="container mx-auto px-4 py-8">
+		<header class="mb-8">
+			<h1 class="text-4xl font-bold text-gray-900">GitHub Actions Dashboard</h1>
+			<p class="text-gray-600 mt-2">Real-time workflow monitoring across repositories</p>
+		</header>
+
+		<!-- Analytics Overview Section -->
+		<div class="mb-8">
+			<h2 class="text-2xl font-semibold mb-4">Analytics Overview</h2>
+			<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+				<!-- Overall Stats -->
+				<div id="analytics-stats" hx-get="/api/analytics?days=7" hx-trigger="load, every 60s" hx-swap="innerHTML">
+					<div class="bg-white rounded-lg shadow p-6">
+						<div class="animate-pulse">
+							<div class="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
+							<div class="h-8 bg-gray-200 rounded w-1/2"></div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Flaky Tests Card -->
+				<div class="bg-white rounded-lg shadow p-6">
+					<h3 class="text-lg font-semibold text-gray-900 mb-2">Flaky Tests</h3>
+					<div id="flaky-count" class="text-3xl font-bold text-yellow-600">-</div>
+					<p class="text-sm text-gray-600 mt-1">Tests with intermittent failures</p>
+				</div>
+
+				<!-- Trend Indicator -->
+				<div class="bg-white rounded-lg shadow p-6">
+					<h3 class="text-lg font-semibold text-gray-900 mb-2">7-Day Trend</h3>
+					<div id="trend-indicator" class="text-3xl font-bold text-blue-600">-</div>
+					<p class="text-sm text-gray-600 mt-1">Average success rate</p>
+				</div>
+			</div>
+		</div>
+
+		<!-- Flaky Tests Section -->
+		<div class="mb-8">
+			<h2 class="text-2xl font-semibold mb-4">Flaky Tests</h2>
+			<div id="flaky-tests-container" hx-get="/api/flaky-tests?days=30&min_runs=5" hx-trigger="load, every 120s" hx-swap="innerHTML">
+				<div class="flex items-center justify-center p-8 bg-white rounded-lg shadow">
+					<div class="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900"></div>
+					<span class="ml-3 text-gray-600">Loading flaky tests...</span>
+				</div>
+			</div>
+		</div>
+
+		<!-- Repositories Section -->
+		<div class="mb-8">
+			<h2 class="text-2xl font-semibold mb-4">Repositories</h2>
+			<div id="repositories-container" hx-get="/api/repositories" hx-trigger="load" hx-swap="innerHTML">
+				<div class="flex items-center justify-center p-8">
+					<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+					<span class="ml-3 text-gray-600">Loading repositories...</span>
+				</div>
+			</div>
+		</div>
+
+		<!-- Recent Workflows Section -->
+		<div>
+			<h2 class="text-2xl font-semibold mb-4">Recent Workflow Runs</h2>
+			<div id="workflows-container" hx-get="/api/workflows?limit=20" hx-trigger="load" hx-swap="innerHTML">
+				<div class="flex items-center justify-center p-8">
+					<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+					<span class="ml-3 text-gray-600">Loading workflows...</span>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script src="/static/dashboard.js"></script>
 </body>
 </html>
-{{end}}
