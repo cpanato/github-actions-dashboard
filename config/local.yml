@@ -1,0 +1,63 @@
+# Local Development Configuration
+# Uses SQLite for easy local testing
+
+server:
+  address: "0.0.0.0"
+  port: 8080
+  public_url: https://186d37c427b3.ngrok-free.app
+
+
+logging:
+  level: "debug"
+  text: true
+
+database:
+  # Use SQLite for local development (default)
+  driver: "sqlite"
+  url: "file:dashboard.db?cache=shared&mode=rwc"
+
+  # For in-memory database (useful for testing):
+  # url: ":memory:"
+
+  # For PostgreSQL local instance:
+  # driver: "postgres"
+  # url: "postgres://postgres:password@localhost:5432/dashboard?sslmode=disable"
+
+cache:
+  workflow_ttl: "15m"
+  max_entries: 10000
+
+options:
+  default_time_window: "12h"
+  max_repos_per_page: 50
+  enable_realtime: true
+
+sessions:
+  # Leave empty for auto-generated (development only)
+  # In production, set via DASHBOARD_SESSIONS_SECRET_KEY env var
+  secret_key: ""
+  # Session lifetime in seconds (default: 86400 = 24 hours)
+  lifetime: 86400
+
+# GitHub App configuration
+# These values should come from environment variables:
+# DASHBOARD_GITHUB_APP_INTEGRATION_ID
+# DASHBOARD_GITHUB_APP_PRIVATE_KEY
+# DASHBOARD_GITHUB_APP_WEBHOOK_SECRET
+# DASHBOARD_GITHUB_OAUTH_CLIENT_ID
+# DASHBOARD_GITHUB_OAUTH_CLIENT_SECRET
+github:
+  web_url: "https://github.com"
+  v3_api_url: "https://api.github.com"
+
+  app:
+    integration_id: 0  # Set via env var
+    webhook_secret: "" # Set via env var
+    private_key: ""    # Set via env var
+
+  oauth:
+    # OAuth client ID
+    client_id: ""
+    # OAuth client secret
+    # Can also be provided via DASHBOARD_GITHUB_OAUTH_CLIENT_SECRET env var
+    client_secret: ""

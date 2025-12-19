@@ -1,87 +1,116 @@
 package main
 
 import (
-	_ "embed"
-	"fmt"
-	"html/template"
-	"log"
-	"net/http"
+	"context"
+	"flag"
+	"log/slog"
 	"os"
-	"path/filepath"
-	"time"
+	"os/signal"
+	"syscall"
 
-	"github.com/patrickmn/go-cache"
+	"github.com/chainguard-dev/clog"
+
+	"github.com/cpanato/github-actions-dashboard/server"
 )
 
-var c *cache.Cache
-
-type Dashboard struct {
-	Owner          string
-	Repo           string
-	DateGenerated  string
-	NextGeneration string
-	Data           map[string][]Status
-}
-
 func main() {
-	c = cache.New(15*time.Minute, 30*time.Minute)
+	// Parse command line flags
+	configPath := flag.String("config", "", "path to configuration file")
+	flag.Parse()
 
-	http.HandleFunc("/", handleRequest)
-
-	log.Print("Listening on :3000...")
-	err := http.ListenAndServe(":3000", nil) //nolint: gosec
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-type Status struct {
-	SHA         string
-	Status      string
-	Event       string
-	Conclusion  string
-	TableStatus string
-	JobHTML     string
-	WorkflowID  int64
-	CreatedAt   time.Time
-	PRUrl       string
-}
-
-func handleRequest(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.Error(w, "404 not found.", http.StatusNotFound)
-		return
+	// Setup logging
+	if os.Getenv("DASHBOARD_LOGGING_TEXT") == "true" {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})))
 	}
 
-	switch r.Method {
-	case "GET":
-		input := fmt.Sprintf("%s/templates/input.html", http.Dir(os.Getenv("KO_DATA_PATH")))
-		http.ServeFile(w, r, input)
-	case "POST":
-		if err := r.ParseForm(); err != nil {
-			fmt.Fprintf(w, "ParseForm() err: %v", err)
-			return
+	ctx := context.Background()
+	logger := clog.New(slog.Default().Handler()).With("app", "github-actions-dashboard")
+	ctx = clog.WithLogger(ctx, logger)
+
+	// Load configuration
+	var cfg *server.Config
+	var err error
+
+	if *configPath != "" {
+		// Load from file
+		configBytes, readErr := os.ReadFile(*configPath)
+		if readErr != nil {
+			logger.Error("Failed to read config file", "error", readErr, "path", *configPath)
+			os.Exit(1)
 		}
-
-		owner := r.FormValue("owner")
-		repo := r.FormValue("repo")
-		serveTemplate(w, r, owner, repo)
-	default:
-		fmt.Fprintf(w, "Sorry, only GET and POST methods are supported.")
+		cfg, err = server.ParseConfig(configBytes)
+		if err != nil {
+			logger.Error("Failed to parse config", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("Loaded configuration from file", "config", *configPath)
+	} else {
+		// Use minimal default config for environment-based configuration
+		cfg, err = server.ParseConfig([]byte(`
+server:
+  address: "0.0.0.0"
+  port: 8080
+logging:
+  level: "info"
+  text: false
+`))
+		if err != nil {
+			logger.Error("Failed to parse default config", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("Using environment-based configuration")
 	}
-}
 
-func serveTemplate(w http.ResponseWriter, _ *http.Request, owner, repo string) {
-	dataReport := getJobs(c, owner, repo)
-	lp := filepath.Join(os.Getenv("KO_DATA_PATH"), "templates/dashboard.html")
+	// Apply logging configuration
+	var logLevel slog.Level
+	switch cfg.Logging.Level {
+	case "debug":
+		logLevel = slog.LevelDebug
+	case "info":
+		logLevel = slog.LevelInfo
+	case "warn", "warning":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	default:
+		logLevel = slog.LevelInfo
+	}
 
-	tmpl, _ := template.ParseFiles(lp)
-	w.Header().Set("Content-Type", "text/html")
+	if cfg.Logging.Text {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: logLevel,
+		})))
+	} else {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level: logLevel,
+		})))
+	}
 
-	err := tmpl.ExecuteTemplate(w, "dashboard", dataReport)
+	// Create and start server
+	srv, err := server.New(cfg)
 	if err != nil {
-		// Log the detailed error
-		log.Print(err.Error())
-		http.Error(w, http.StatusText(500), 500)
+		logger.Error("Failed to create server", "error", err)
+		os.Exit(1)
+	}
+	defer srv.Close()
+
+	// Handle graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		logger.Info("Shutting down gracefully...")
+		srv.Close()
+		os.Exit(0)
+	}()
+
+	// Start server
+	logger.Info("Starting GitHub Actions Dashboard")
+	if err := srv.Start(); err != nil {
+		logger.Error("Server failed", "error", err)
+		os.Exit(1)
 	}
 }

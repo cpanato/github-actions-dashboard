@@ -1,0 +1,44 @@
+{{if .flaky_tests}}
+<div class="bg-white rounded-lg shadow overflow-hidden">
+	<div class="overflow-x-auto">
+		<table class="min-w-full divide-y divide-gray-200">
+			<thead class="bg-gray-50">
+				<tr>
+					<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Test Name</th>
+					<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Repository</th>
+					<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Runs</th>
+					<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Failures</th>
+					<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Flake Rate</th>
+				</tr>
+			</thead>
+			<tbody class="bg-white divide-y divide-gray-200">
+				{{range .flaky_tests}}
+				<tr class="hover:bg-gray-50">
+					<td class="px-6 py-4">
+						<div class="text-sm font-medium text-gray-900">{{.Name}}</div>
+					</td>
+					<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+						{{.Repository}}
+					</td>
+					<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+						{{.TotalRuns}}
+					</td>
+					<td class="px-6 py-4 whitespace-nowrap text-sm text-red-600 font-medium">
+						{{.FailureCount}}
+					</td>
+					<td class="px-6 py-4 whitespace-nowrap">
+						<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
+							{{printf "%.1f" .FlakeRate}}%
+						</span>
+					</td>
+				</tr>
+				{{end}}
+			</tbody>
+		</table>
+	</div>
+</div>
+{{else}}
+<div class="bg-white rounded-lg shadow p-8 text-center">
+	<p class="text-gray-500">No flaky tests detected</p>
+</div>
+{{end}}

@@ -1,0 +1,73 @@
+{{if .workflows}}
+<div class="bg-white rounded-lg shadow overflow-hidden">
+	<div class="overflow-x-auto">
+		<table class="min-w-full divide-y divide-gray-200">
+			<thead class="bg-gray-50">
+				<tr>
+					<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Workflow</th>
+					<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Repository</th>
+					<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Branch</th>
+					<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+					<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Started</th>
+				</tr>
+			</thead>
+			<tbody class="bg-white divide-y divide-gray-200">
+				{{range .workflows}}
+				<tr class="hover:bg-gray-50">
+					<td class="px-6 py-4 whitespace-nowrap">
+						<div class="flex items-center">
+							<a href="{{.HTMLURL}}" target="_blank" class="text-sm font-medium text-gray-900 hover:text-blue-600">
+								{{.WorkflowName}}
+							</a>
+						</div>
+						<div class="text-sm text-gray-500">
+							Run #{{.RunNumber}}
+						</div>
+					</td>
+					<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+						{{.RepositoryFullName}}
+					</td>
+					<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+						{{.HeadBranch}}
+					</td>
+					<td class="px-6 py-4 whitespace-nowrap">
+						{{if eq .Conclusion "success"}}
+						<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+							✓ Success
+						</span>
+						{{else if eq .Conclusion "failure"}}
+						<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
+							✗ Failed
+						</span>
+						{{else if eq .Conclusion "cancelled"}}
+						<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
+							⊗ Cancelled
+						</span>
+						{{else if eq .Status "in_progress"}}
+						<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+							⟳ Running
+						</span>
+						{{else if eq .Status "queued"}}
+						<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
+							⏱ Queued
+						</span>
+						{{else}}
+						<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
+							{{.Status}}
+						</span>
+						{{end}}
+					</td>
+					<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+						{{.CreatedAt}}
+					</td>
+				</tr>
+				{{end}}
+			</tbody>
+		</table>
+	</div>
+</div>
+{{else}}
+<div class="bg-white rounded-lg shadow p-8 text-center">
+	<p class="text-gray-500">No workflow runs found.</p>
+</div>
+{{end}}
