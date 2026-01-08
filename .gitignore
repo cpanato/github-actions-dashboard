@@ -8,3 +8,6 @@ secrets.txt
 *.tfstate
 *.tfstate.*
 **/.terraform/
+iac/*/.terraform/*
+iac/*/.terraform.lock.hcl
+/kodata/.DS_Store
