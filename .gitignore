@@ -1,2 +1,5 @@
 github-actions-dashboard
 dist/*
+iac/*/.terraform/*
+iac/*/.terraform.lock.hcl
+/kodata/.DS_Store
