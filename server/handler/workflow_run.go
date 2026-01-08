@@ -8,9 +8,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/google/go-github/v66/github"
+	"github.com/chainguard-dev/clog"
+	"github.com/google/go-github/v80/github"
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
 )
 
 // WorkflowRunHandler processes workflow_run webhook events
@@ -25,7 +25,7 @@ func (h *WorkflowRunHandler) Handles() []string {
 
 // Handle processes a workflow_run webhook event
 func (h *WorkflowRunHandler) Handle(ctx context.Context, eventType, deliveryID string, payload []byte) error {
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	var event github.WorkflowRunEvent
 	if err := json.Unmarshal(payload, &event); err != nil {
@@ -34,33 +34,30 @@ func (h *WorkflowRunHandler) Handle(ctx context.Context, eventType, deliveryID s
 
 	// Only process completed workflow runs
 	if event.GetAction() != "completed" {
-		logger.Debug().
-			Str("action", event.GetAction()).
-			Msg("Skipping non-completed workflow_run")
+		logger.Debug("Skipping non-completed workflow_run", "action", event.GetAction())
 		return nil
 	}
 
 	workflowRun := event.GetWorkflowRun()
 	repo := event.GetRepo()
 
-	logger.Info().
-		Int64("workflow_run_id", workflowRun.GetID()).
-		Str("name", workflowRun.GetName()).
-		Str("status", workflowRun.GetStatus()).
-		Str("conclusion", workflowRun.GetConclusion()).
-		Str("repository", repo.GetFullName()).
-		Str("branch", workflowRun.GetHeadBranch()).
-		Msg("Processing completed workflow run")
+	logger.Info("Processing completed workflow run",
+		"workflow_run_id", workflowRun.GetID(),
+		"name", workflowRun.GetName(),
+		"status", workflowRun.GetStatus(),
+		"conclusion", workflowRun.GetConclusion(),
+		"repository", repo.GetFullName(),
+		"branch", workflowRun.GetHeadBranch())
 
 	// TODO: Store in database
 	if err := h.storeWorkflowRun(ctx, workflowRun, repo); err != nil {
-		logger.Error().Err(err).Msg("Failed to store workflow run")
+		logger.Error("Failed to store workflow run", "error", err)
 		return err
 	}
 
 	// TODO: Broadcast update via WebSocket
 	if err := h.broadcastUpdate(ctx, workflowRun, repo); err != nil {
-		logger.Warn().Err(err).Msg("Failed to broadcast update")
+		logger.Warn("Failed to broadcast update", "error", err)
 		// Don't return error - this is non-critical
 	}
 
@@ -69,37 +66,42 @@ func (h *WorkflowRunHandler) Handle(ctx context.Context, eventType, deliveryID s
 
 // storeWorkflowRun saves workflow run data to the database
 func (h *WorkflowRunHandler) storeWorkflowRun(ctx context.Context, run *github.WorkflowRun, repo *github.Repository) error {
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
+
+	// Check if database is available
+	if h.DB == nil {
+		logger.Warn("Database not available, skipping workflow run storage")
+		return errors.New("database not available")
+	}
 
 	// First, ensure repository exists
 	_, err := h.DB.ExecContext(ctx, `
 		INSERT INTO repositories (id, owner, name, full_name, default_branch)
-		VALUES (?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (id) DO UPDATE SET
 			updated_at = CURRENT_TIMESTAMP,
 			default_branch = EXCLUDED.default_branch
 	`, repo.GetID(), repo.GetOwner().GetLogin(), repo.GetName(), repo.GetFullName(), repo.GetDefaultBranch())
 	if err != nil {
-		logger.Error().Err(err).
-			Int64("repo_id", repo.GetID()).
-			Str("repo_name", repo.GetFullName()).
-			Msg("Failed to upsert repository")
+		logger.Error("Failed to upsert repository",
+			"error", err,
+			"repo_id", repo.GetID(),
+			"repo_name", repo.GetFullName())
 		return errors.Wrap(err, "failed to upsert repository")
 	}
 
-	logger.Debug().
-		Int64("repo_id", repo.GetID()).
-		Str("repo_name", repo.GetFullName()).
-		Msg("Repository upserted successfully")
+	logger.Debug("Repository upserted successfully",
+		"repo_id", repo.GetID(),
+		"repo_name", repo.GetFullName())
 
 	// Insert workflow run
 	_, err = h.DB.ExecContext(ctx, `
 		INSERT INTO workflow_runs (
-			id, repository_id, workflow_id, workflow_name,
+			id, repository_id, workflow_id, workflow_name, workflow_path,
 			head_branch, head_sha, run_number, event,
 			status, conclusion, html_url,
 			created_at, updated_at, run_started_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			conclusion = EXCLUDED.conclusion,
@@ -109,6 +111,7 @@ func (h *WorkflowRunHandler) storeWorkflowRun(ctx context.Context, run *github.W
 		repo.GetID(),
 		run.GetWorkflowID(),
 		run.GetName(),
+		run.GetPath(),
 		run.GetHeadBranch(),
 		run.GetHeadSHA(),
 		run.GetRunNumber(),
@@ -124,11 +127,10 @@ func (h *WorkflowRunHandler) storeWorkflowRun(ctx context.Context, run *github.W
 		return errors.Wrap(err, "failed to insert workflow run")
 	}
 
-	logger.Info().
-		Int64("workflow_run_id", run.GetID()).
-		Str("repository", repo.GetFullName()).
-		Str("conclusion", run.GetConclusion()).
-		Msg("Stored workflow run")
+	logger.Info("Stored workflow run",
+		"workflow_run_id", run.GetID(),
+		"repository", repo.GetFullName(),
+		"conclusion", run.GetConclusion())
 
 	return nil
 }
@@ -139,7 +141,7 @@ func (h *WorkflowRunHandler) broadcastUpdate(ctx context.Context, run *github.Wo
 		return nil // WebSocket not enabled
 	}
 
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	// Broadcast workflow run update
 	update := map[string]interface{}{
@@ -155,13 +157,12 @@ func (h *WorkflowRunHandler) broadcastUpdate(ctx context.Context, run *github.Wo
 	}
 
 	if err := h.WSHub.Broadcast("workflow_update", update); err != nil {
-		logger.Error().Err(err).Msg("Failed to broadcast workflow update")
+		logger.Error("Failed to broadcast workflow update", "error", err)
 		return err
 	}
 
-	logger.Debug().
-		Int64("workflow_run_id", run.GetID()).
-		Int("connected_clients", h.WSHub.ClientCount()).
-		Msg("Broadcasted workflow update")
+	logger.Debug("Broadcasted workflow update",
+		"workflow_run_id", run.GetID(),
+		"connected_clients", h.WSHub.ClientCount())
 	return nil
 }

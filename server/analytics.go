@@ -15,6 +15,8 @@ import (
 type Analytics struct {
 	TotalRuns       int          `json:"total_runs"`
 	SuccessRate     float64      `json:"success_rate"`
+	SkippedRuns     int          `json:"skipped_runs"`
+	CancelledRuns   int          `json:"cancelled_runs"`
 	AverageDuration float64      `json:"average_duration_seconds"`
 	FlakyTests      []FlakyTest  `json:"flaky_tests,omitempty"`
 	TrendData       []TrendPoint `json:"trend_data,omitempty"`
@@ -48,36 +50,44 @@ func GetAnalytics(ctx context.Context, db *sql.DB, repositoryID int64, days int)
 		query = `
 			SELECT
 				COUNT(*) as total_runs,
-				SUM(CASE WHEN conclusion = 'success' THEN 1 ELSE 0 END) as successful_runs
+				COALESCE(SUM(CASE WHEN conclusion = 'success' THEN 1 ELSE 0 END), 0) as successful_runs,
+				COALESCE(SUM(CASE WHEN conclusion = 'skipped' THEN 1 ELSE 0 END), 0) as skipped_runs,
+				COALESCE(SUM(CASE WHEN conclusion = 'cancelled' THEN 1 ELSE 0 END), 0) as cancelled_runs
 			FROM workflow_runs
-			WHERE repository_id = ? AND created_at >= ?
+			WHERE repository_id = $1 AND created_at >= $2
 		`
 		args = []interface{}{repositoryID, since}
 	} else {
 		query = `
 			SELECT
 				COUNT(*) as total_runs,
-				SUM(CASE WHEN conclusion = 'success' THEN 1 ELSE 0 END) as successful_runs
+				COALESCE(SUM(CASE WHEN conclusion = 'success' THEN 1 ELSE 0 END), 0) as successful_runs,
+				COALESCE(SUM(CASE WHEN conclusion = 'skipped' THEN 1 ELSE 0 END), 0) as skipped_runs,
+				COALESCE(SUM(CASE WHEN conclusion = 'cancelled' THEN 1 ELSE 0 END), 0) as cancelled_runs
 			FROM workflow_runs
-			WHERE created_at >= ?
+			WHERE created_at >= $1
 		`
 		args = []interface{}{since}
 	}
 
-	var totalRuns, successfulRuns int
-	err := db.QueryRowContext(ctx, query, args...).Scan(&totalRuns, &successfulRuns)
+	var totalRuns, successfulRuns, skippedRuns, cancelledRuns int
+	err := db.QueryRowContext(ctx, query, args...).Scan(&totalRuns, &successfulRuns, &skippedRuns, &cancelledRuns)
 	if err != nil {
 		return nil, err
 	}
 
+	// Calculate success rate excluding skipped and cancelled
+	activeRuns := totalRuns - skippedRuns - cancelledRuns
 	successRate := 0.0
-	if totalRuns > 0 {
-		successRate = float64(successfulRuns) / float64(totalRuns) * 100
+	if activeRuns > 0 {
+		successRate = float64(successfulRuns) / float64(activeRuns) * 100
 	}
 
 	return &Analytics{
 		TotalRuns:       totalRuns,
 		SuccessRate:     successRate,
+		SkippedRuns:     skippedRuns,
+		CancelledRuns:   cancelledRuns,
 		AverageDuration: 0, // TODO: Calculate duration
 	}, nil
 }
@@ -144,7 +154,9 @@ func GetTrendData(ctx context.Context, db *sql.DB, repositoryID int64, days int)
 		SELECT
 			DATE(created_at) as date,
 			COUNT(*) as total_runs,
-			SUM(CASE WHEN conclusion = 'success' THEN 1 ELSE 0 END) as successful_runs
+			COALESCE(SUM(CASE WHEN conclusion = 'success' THEN 1 ELSE 0 END), 0) as successful_runs,
+			COALESCE(SUM(CASE WHEN conclusion = 'skipped' THEN 1 ELSE 0 END), 0) as skipped_runs,
+			COALESCE(SUM(CASE WHEN conclusion = 'cancelled' THEN 1 ELSE 0 END), 0) as cancelled_runs
 		FROM workflow_runs
 		WHERE created_at >= $1
 	`
@@ -170,13 +182,14 @@ func GetTrendData(ctx context.Context, db *sql.DB, repositoryID int64, days int)
 	var trends []TrendPoint
 	for rows.Next() {
 		var tp TrendPoint
-		var successfulRuns int
-		err = rows.Scan(&tp.Date, &tp.TotalRuns, &successfulRuns)
+		var successfulRuns, skippedRuns, cancelledRuns int
+		err = rows.Scan(&tp.Date, &tp.TotalRuns, &successfulRuns, &skippedRuns, &cancelledRuns)
 		if err != nil {
 			return nil, err
 		}
-		if tp.TotalRuns > 0 {
-			tp.SuccessRate = float64(successfulRuns) / float64(tp.TotalRuns) * 100
+		activeRuns := tp.TotalRuns - skippedRuns - cancelledRuns
+		if activeRuns > 0 {
+			tp.SuccessRate = float64(successfulRuns) / float64(activeRuns) * 100
 		}
 		trends = append(trends, tp)
 	}

@@ -29,6 +29,22 @@
 				<div class="text-xs text-gray-600">Failed</div>
 			</div>
 		</div>
+		{{if or (gt .SkippedRuns 0) (gt .CancelledRuns 0)}}
+		<div class="grid grid-cols-2 gap-3 text-center mt-2">
+			{{if gt .SkippedRuns 0}}
+			<div class="bg-gray-50 rounded p-2">
+				<div class="text-lg font-semibold text-gray-600">{{.SkippedRuns}}</div>
+				<div class="text-xs text-gray-500">Skipped</div>
+			</div>
+			{{end}}
+			{{if gt .CancelledRuns 0}}
+			<div class="bg-yellow-50 rounded p-2">
+				<div class="text-lg font-semibold text-yellow-700">{{.CancelledRuns}}</div>
+				<div class="text-xs text-gray-500">Cancelled</div>
+			</div>
+			{{end}}
+		</div>
+		{{end}}
 	</div>
 	{{end}}
 </div>

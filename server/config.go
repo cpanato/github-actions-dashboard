@@ -34,11 +34,10 @@ type LoggingConfig struct {
 }
 
 type DatabaseConfig struct {
-	// Database driver: "sqlite" or "postgres" (default: sqlite)
+	// Database driver: "postgres" (default: postgres)
 	Driver string `yaml:"driver"`
 
 	// Database connection string
-	// For SQLite: "file:dashboard.db" or ":memory:" for testing
 	// For PostgreSQL: "postgres://user:pass@localhost:5432/dbname?sslmode=disable"
 	// For Cloud SQL: auto-generated from CloudSQLInstance
 	URL string `yaml:"url"`
@@ -109,19 +108,15 @@ func ParseConfig(bytes []byte) (*Config, error) {
 	if c.Options.MaxReposPerPage == 0 {
 		c.Options.MaxReposPerPage = 50
 	}
+	// Enable real-time updates by default
+	if !c.Options.EnableRealtime {
+		c.Options.EnableRealtime = true
+	}
 	if c.Database.MaxOpenConns == 0 {
 		c.Database.MaxOpenConns = 25
 	}
 	if c.Database.MaxIdleConns == 0 {
 		c.Database.MaxIdleConns = 5
-	}
-
-	// Default to SQLite for easy local development
-	if c.Database.Driver == "" {
-		c.Database.Driver = "sqlite"
-	}
-	if c.Database.URL == "" && c.Database.Driver == "sqlite" {
-		c.Database.URL = "file:dashboard.db?cache=shared&mode=rwc"
 	}
 
 	// Load from environment variables
@@ -132,30 +127,58 @@ func ParseConfig(bytes []byte) (*Config, error) {
 
 	c.Github.SetValuesFromEnv(envPrefix)
 
+	// Set GitHub defaults if not provided
+	if c.Github.WebURL == "" {
+		c.Github.WebURL = "https://github.com"
+	}
+	if c.Github.V3APIURL == "" {
+		c.Github.V3APIURL = "https://api.github.com"
+	}
+
+	// Server configuration from environment
+	if v, ok := os.LookupEnv(envPrefix + "PUBLIC_URL"); ok {
+		c.Server.PublicURL = v
+		fmt.Printf("DEBUG: Set public URL from env: %s\n", v)
+	}
+
+	fmt.Printf("DEBUG: Set server address from env: %s\n", c.Server.Address)
+
 	// Database configuration from environment
 	if v, ok := os.LookupEnv(envPrefix + "DATABASE_DRIVER"); ok {
 		c.Database.Driver = v
+		fmt.Printf("DEBUG: Set database driver from env: %s\n", v)
 	}
 	if v, ok := os.LookupEnv(envPrefix + "DATABASE_URL"); ok {
 		c.Database.URL = v
+		fmt.Printf("DEBUG: Set database URL from env (length: %d)\n", len(v))
 	}
 	if v, ok := os.LookupEnv(envPrefix + "DATABASE_CLOUD_SQL_INSTANCE"); ok {
 		c.Database.CloudSQLInstance = v
 		c.Database.Driver = "postgres" // Cloud SQL is always PostgreSQL
+		fmt.Printf("DEBUG: Set Cloud SQL instance: %s\n", v)
 	}
 	if v, ok := os.LookupEnv(envPrefix + "DATABASE_NAME"); ok {
 		c.Database.DBName = v
+		fmt.Printf("DEBUG: Set database name: %s\n", v)
 	}
 	if v, ok := os.LookupEnv(envPrefix + "DATABASE_USER"); ok {
 		c.Database.User = v
+		fmt.Printf("DEBUG: Set database user: %s\n", v)
 	}
 	if v, ok := os.LookupEnv(envPrefix + "DATABASE_PASSWORD"); ok {
 		c.Database.Password = v
+		fmt.Printf("DEBUG: Set database password (length: %d)\n", len(v))
 	}
 
 	// Build Cloud SQL connection string if not provided
 	if c.Database.URL == "" && c.Database.CloudSQLInstance != "" {
 		c.Database.URL = buildCloudSQLConnectionString(&c.Database)
+		fmt.Printf("DEBUG: Built Cloud SQL connection string for instance: %s\n", c.Database.CloudSQLInstance)
+	}
+
+	// Default to PostgreSQL
+	if c.Database.Driver == "" {
+		c.Database.Driver = "postgres"
 	}
 
 	return &c, nil
