@@ -2,13 +2,17 @@
 <html>
 <head>
 	<title>GitHub Actions Dashboard</title>
+	<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
 	<script src="https://unpkg.com/htmx.org@1.9.10"></script>
 	<script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50">
 	<div class="container mx-auto px-4 py-8">
 		<header class="mb-8">
-			<h1 class="text-4xl font-bold text-gray-900">GitHub Actions Dashboard</h1>
+			<div class="flex items-center gap-4 mb-4">
+				<img src="/static/logo.svg" alt="Logo" class="w-12 h-12">
+				<h1 class="text-4xl font-bold text-gray-900">GitHub Actions Dashboard</h1>
+			</div>
 			<p class="text-gray-600 mt-2">Real-time workflow monitoring across repositories</p>
 		</header>
 
@@ -66,7 +70,35 @@
 
 		<!-- Recent Workflows Section -->
 		<div>
-			<h2 class="text-2xl font-semibold mb-4">Recent Workflow Runs</h2>
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-2xl font-semibold">Recent Workflow Runs</h2>
+				<div class="flex items-center space-x-3">
+					<div class="flex items-center space-x-2">
+						<label for="workflow-repo-filter" class="text-sm font-medium text-gray-700">Repository:</label>
+						<select id="workflow-repo-filter" class="block rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm" onchange="updateWorkflowFilters()">
+							<option value="">All repositories</option>
+						</select>
+					</div>
+					<div class="flex items-center space-x-2">
+						<label for="workflow-conclusion-filter" class="text-sm font-medium text-gray-700">Result:</label>
+						<select id="workflow-conclusion-filter" class="block rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm" onchange="updateWorkflowFilters()">
+							<option value="">All results</option>
+							<option value="success">Success</option>
+							<option value="failure">Failure</option>
+							<option value="cancelled">Cancelled</option>
+							<option value="skipped">Skipped</option>
+						</select>
+					</div>
+					<div class="flex items-center space-x-2">
+						<label for="workflow-limit" class="text-sm font-medium text-gray-700">Show:</label>
+						<select id="workflow-limit" class="block rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm" onchange="updateWorkflowFilters()">
+							<option value="20" selected>20</option>
+							<option value="50">50</option>
+							<option value="100">100</option>
+						</select>
+					</div>
+				</div>
+			</div>
 			<div id="workflows-container" hx-get="/api/workflows?limit=20" hx-trigger="load" hx-swap="innerHTML">
 				<div class="flex items-center justify-center p-8">
 					<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
@@ -75,6 +107,45 @@
 			</div>
 		</div>
 	</div>
+
+	<script>
+		// Populate repository filter from repositories data
+		function populateRepoFilter() {
+			fetch('/api/repositories')
+				.then(r => r.json())
+				.then(data => {
+					const select = document.getElementById('workflow-repo-filter');
+					if (data.repositories) {
+						data.repositories.forEach(repo => {
+							const option = document.createElement('option');
+							option.value = repo.id;
+							option.textContent = repo.full_name;
+							select.appendChild(option);
+						});
+					}
+				});
+		}
+
+		// Update workflow filters
+		function updateWorkflowFilters() {
+			const repoId = document.getElementById('workflow-repo-filter').value;
+			const conclusion = document.getElementById('workflow-conclusion-filter').value;
+			const limit = document.getElementById('workflow-limit').value;
+
+			const params = new URLSearchParams();
+			if (repoId) params.set('repository_id', repoId);
+			if (conclusion) params.set('conclusion', conclusion);
+			if (limit) params.set('limit', limit);
+
+			const url = '/api/workflows?' + params.toString();
+			htmx.ajax('GET', url, {target: '#workflows-container', swap: 'innerHTML'});
+		}
+
+		// Initialize on page load
+		document.addEventListener('DOMContentLoaded', function() {
+			populateRepoFilter();
+		});
+	</script>
 
 	<script src="/static/dashboard.js"></script>
 </body>

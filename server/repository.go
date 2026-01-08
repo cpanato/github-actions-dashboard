@@ -25,6 +25,8 @@ type Repository struct {
 	TotalRuns      int     `json:"total_runs,omitempty"`
 	SuccessfulRuns int     `json:"successful_runs,omitempty"`
 	FailedRuns     int     `json:"failed_runs,omitempty"`
+	SkippedRuns    int     `json:"skipped_runs,omitempty"`
+	CancelledRuns  int     `json:"cancelled_runs,omitempty"`
 	SuccessRate    float64 `json:"success_rate,omitempty"`
 }
 
@@ -34,6 +36,7 @@ type WorkflowRun struct {
 	RepositoryID int64      `json:"repository_id"`
 	WorkflowID   int64      `json:"workflow_id"`
 	WorkflowName string     `json:"workflow_name"`
+	WorkflowPath string     `json:"workflow_path,omitempty"`
 	HeadBranch   string     `json:"head_branch"`
 	HeadSHA      string     `json:"head_sha"`
 	RunNumber    int        `json:"run_number"`
@@ -60,7 +63,9 @@ func GetRepositories(ctx context.Context, db *sql.DB, withStats bool) ([]Reposit
 		query += `,
 			COUNT(wr.id) as total_runs,
 			SUM(CASE WHEN wr.conclusion = 'success' THEN 1 ELSE 0 END) as successful_runs,
-			SUM(CASE WHEN wr.conclusion = 'failure' THEN 1 ELSE 0 END) as failed_runs
+			SUM(CASE WHEN wr.conclusion = 'failure' THEN 1 ELSE 0 END) as failed_runs,
+			SUM(CASE WHEN wr.conclusion = 'skipped' THEN 1 ELSE 0 END) as skipped_runs,
+			SUM(CASE WHEN wr.conclusion = 'cancelled' THEN 1 ELSE 0 END) as cancelled_runs
 		`
 	}
 
@@ -90,10 +95,12 @@ func GetRepositories(ctx context.Context, db *sql.DB, withStats bool) ([]Reposit
 			err = rows.Scan(
 				&repo.ID, &repo.Owner, &repo.Name, &repo.FullName, &repo.DefaultBranch,
 				&repo.CreatedAt, &repo.UpdatedAt,
-				&repo.TotalRuns, &repo.SuccessfulRuns, &repo.FailedRuns,
+				&repo.TotalRuns, &repo.SuccessfulRuns, &repo.FailedRuns, &repo.SkippedRuns, &repo.CancelledRuns,
 			)
-			if repo.TotalRuns > 0 {
-				repo.SuccessRate = float64(repo.SuccessfulRuns) / float64(repo.TotalRuns) * 100
+			// Calculate success rate excluding skipped and cancelled
+			activeRuns := repo.TotalRuns - repo.SkippedRuns - repo.CancelledRuns
+			if activeRuns > 0 {
+				repo.SuccessRate = float64(repo.SuccessfulRuns) / float64(activeRuns) * 100
 			}
 		} else {
 			err = rows.Scan(
@@ -114,7 +121,7 @@ func GetRepositories(ctx context.Context, db *sql.DB, withStats bool) ([]Reposit
 // GetWorkflowRuns returns workflow runs with optional filtering
 func GetWorkflowRuns(ctx context.Context, db *sql.DB, opts WorkflowRunOptions) ([]WorkflowRun, error) {
 	query := `
-		SELECT wr.id, wr.repository_id, wr.workflow_id, wr.workflow_name,
+		SELECT wr.id, wr.repository_id, wr.workflow_id, wr.workflow_name, wr.workflow_path,
 		       wr.head_branch, wr.head_sha, wr.run_number, wr.event,
 		       wr.status, wr.conclusion, wr.html_url,
 		       wr.created_at, wr.updated_at, wr.run_started_at,
@@ -125,31 +132,48 @@ func GetWorkflowRuns(ctx context.Context, db *sql.DB, opts WorkflowRunOptions) (
 	`
 
 	args := []interface{}{}
+	paramIndex := 1
 
 	if opts.RepositoryID > 0 {
-		query += ` AND wr.repository_id = ?`
+		query += fmt.Sprintf(` AND wr.repository_id = $%d`, paramIndex)
 		args = append(args, opts.RepositoryID)
+		paramIndex++
 	}
 
 	if opts.Status != "" {
-		query += ` AND wr.status = ?`
+		query += fmt.Sprintf(` AND wr.status = $%d`, paramIndex)
 		args = append(args, opts.Status)
+		paramIndex++
 	}
 
 	if opts.Conclusion != "" {
-		query += ` AND wr.conclusion = ?`
+		query += fmt.Sprintf(` AND wr.conclusion = $%d`, paramIndex)
 		args = append(args, opts.Conclusion)
+		paramIndex++
+	}
+
+	if opts.HeadBranch != "" {
+		query += fmt.Sprintf(` AND wr.head_branch = $%d`, paramIndex)
+		args = append(args, opts.HeadBranch)
+		paramIndex++
+	}
+
+	if opts.WorkflowName != "" {
+		query += fmt.Sprintf(` AND wr.workflow_name = $%d`, paramIndex)
+		args = append(args, opts.WorkflowName)
+		paramIndex++
 	}
 
 	if !opts.Since.IsZero() {
-		query += ` AND wr.created_at >= ?`
+		query += fmt.Sprintf(` AND wr.created_at >= $%d`, paramIndex)
 		args = append(args, opts.Since)
+		paramIndex++
 	}
 
 	query += ` ORDER BY wr.created_at DESC`
 
 	if opts.Limit > 0 {
-		query += ` LIMIT ?`
+		query += fmt.Sprintf(` LIMIT $%d`, paramIndex)
 		args = append(args, opts.Limit)
 	}
 
@@ -163,7 +187,7 @@ func GetWorkflowRuns(ctx context.Context, db *sql.DB, opts WorkflowRunOptions) (
 	for rows.Next() {
 		var run WorkflowRun
 		err = rows.Scan(
-			&run.ID, &run.RepositoryID, &run.WorkflowID, &run.WorkflowName,
+			&run.ID, &run.RepositoryID, &run.WorkflowID, &run.WorkflowName, &run.WorkflowPath,
 			&run.HeadBranch, &run.HeadSHA, &run.RunNumber, &run.Event,
 			&run.Status, &run.Conclusion, &run.HTMLURL,
 			&run.CreatedAt, &run.UpdatedAt, &run.RunStartedAt,
@@ -183,6 +207,8 @@ type WorkflowRunOptions struct {
 	RepositoryID int64
 	Status       string
 	Conclusion   string
+	HeadBranch   string
+	WorkflowName string
 	Since        time.Time
 	Limit        int
 }

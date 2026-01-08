@@ -8,9 +8,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/google/go-github/v66/github"
+	"github.com/chainguard-dev/clog"
+	"github.com/google/go-github/v80/github"
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
 )
 
 // InstallationHandler processes installation webhook events
@@ -25,7 +25,7 @@ func (h *InstallationHandler) Handles() []string {
 
 // Handle processes installation webhook events
 func (h *InstallationHandler) Handle(ctx context.Context, eventType, deliveryID string, payload []byte) error {
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	// Handle installation_repositories events separately
 	if eventType == "installation_repositories" {
@@ -35,10 +35,9 @@ func (h *InstallationHandler) Handle(ctx context.Context, eventType, deliveryID 
 		}
 
 		action := event.GetAction()
-		logger.Info().
-			Str("action", action).
-			Int("repos_count", len(event.RepositoriesAdded)+len(event.RepositoriesRemoved)).
-			Msg("Processing installation_repositories event")
+		logger.Info("Processing installation_repositories event",
+			"action", action,
+			"repos_count", len(event.RepositoriesAdded)+len(event.RepositoriesRemoved))
 
 		switch action {
 		case "added":
@@ -46,7 +45,7 @@ func (h *InstallationHandler) Handle(ctx context.Context, eventType, deliveryID 
 		case "removed":
 			return h.handleRepositoriesRemoved(ctx, event)
 		default:
-			logger.Info().Str("action", action).Msg("Ignoring installation_repositories action")
+			logger.Info("Ignoring installation_repositories action", "action", action)
 		}
 		return nil
 	}
@@ -60,11 +59,10 @@ func (h *InstallationHandler) Handle(ctx context.Context, eventType, deliveryID 
 	action := event.GetAction()
 	installation := event.GetInstallation()
 
-	logger.Info().
-		Str("action", action).
-		Int64("installation_id", installation.GetID()).
-		Str("account", installation.GetAccount().GetLogin()).
-		Msg("Processing installation event")
+	logger.Info("Processing installation event",
+		"action", action,
+		"installation_id", installation.GetID(),
+		"account", installation.GetAccount().GetLogin())
 
 	switch action {
 	case "created":
@@ -72,14 +70,14 @@ func (h *InstallationHandler) Handle(ctx context.Context, eventType, deliveryID 
 	case "deleted":
 		return h.handleInstallationDeleted(ctx, event)
 	default:
-		logger.Info().Str("action", action).Msg("Ignoring installation action")
+		logger.Info("Ignoring installation action", "action", action)
 	}
 
 	return nil
 }
 
 func (h *InstallationHandler) handleInstallationCreated(ctx context.Context, event github.InstallationEvent) error {
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	// Add all repositories from the installation
 	for _, repo := range event.Repositories {
@@ -89,10 +87,10 @@ func (h *InstallationHandler) handleInstallationCreated(ctx context.Context, eve
 			ON CONFLICT (id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
 		`, repo.GetID(), event.Installation.GetAccount().GetLogin(), repo.GetName(), repo.GetFullName(), "main")
 		if err != nil {
-			logger.Error().Err(err).Str("repo", repo.GetFullName()).Msg("Failed to add repository")
+			logger.Error("Failed to add repository", "error", err, "repo", repo.GetFullName())
 			continue
 		}
-		logger.Info().Str("repository", repo.GetFullName()).Msg("Added repository from installation")
+		logger.Info("Added repository from installation", "repository", repo.GetFullName())
 	}
 
 	if h.WSHub != nil {
@@ -106,13 +104,12 @@ func (h *InstallationHandler) handleInstallationCreated(ctx context.Context, eve
 }
 
 func (h *InstallationHandler) handleInstallationDeleted(ctx context.Context, event github.InstallationEvent) error {
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	// Optionally: Mark repositories as inactive or remove them
 	// For now, we'll just log it
-	logger.Info().
-		Int64("installation_id", event.Installation.GetID()).
-		Msg("Installation deleted - repositories will remain in database")
+	logger.Info("Installation deleted - repositories will remain in database",
+		"installation_id", event.Installation.GetID())
 
 	if h.WSHub != nil {
 		h.WSHub.Broadcast("installation_update", map[string]interface{}{
@@ -124,7 +121,7 @@ func (h *InstallationHandler) handleInstallationDeleted(ctx context.Context, eve
 }
 
 func (h *InstallationHandler) handleRepositoriesAdded(ctx context.Context, event github.InstallationRepositoriesEvent) error {
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	for _, repo := range event.RepositoriesAdded {
 		_, err := h.DB.ExecContext(ctx, `
@@ -133,10 +130,10 @@ func (h *InstallationHandler) handleRepositoriesAdded(ctx context.Context, event
 			ON CONFLICT (id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
 		`, repo.GetID(), event.Installation.GetAccount().GetLogin(), repo.GetName(), repo.GetFullName(), "main")
 		if err != nil {
-			logger.Error().Err(err).Str("repo", repo.GetFullName()).Msg("Failed to add repository")
+			logger.Error("Failed to add repository", "error", err, "repo", repo.GetFullName())
 			continue
 		}
-		logger.Info().Str("repository", repo.GetFullName()).Msg("Added repository")
+		logger.Info("Added repository", "repository", repo.GetFullName())
 	}
 
 	if h.WSHub != nil {
@@ -149,12 +146,11 @@ func (h *InstallationHandler) handleRepositoriesAdded(ctx context.Context, event
 }
 
 func (h *InstallationHandler) handleRepositoriesRemoved(ctx context.Context, event github.InstallationRepositoriesEvent) error {
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	// Optionally: Remove or mark as inactive
-	logger.Info().
-		Int("count", len(event.RepositoriesRemoved)).
-		Msg("Repositories removed from installation")
+	logger.Info("Repositories removed from installation",
+		"count", len(event.RepositoriesRemoved))
 
 	if h.WSHub != nil {
 		h.WSHub.Broadcast("repositories_removed", map[string]interface{}{

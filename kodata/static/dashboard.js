@@ -4,10 +4,20 @@ let reconnectAttempts = 0;
 const maxReconnectAttempts = 5;
 
 function connectWebSocket() {
+	// Always use absolute path from root to avoid any path duplication issues
 	const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 	const wsUrl = `${protocol}//${window.location.host}/ws`;
 
-	ws = new WebSocket(wsUrl);
+	console.log('Connecting to WebSocket:', wsUrl);
+	console.log('Current page location:', window.location.href);
+	console.log('Current page pathname:', window.location.pathname);
+
+	try {
+		ws = new WebSocket(wsUrl);
+	} catch (error) {
+		console.error('Failed to create WebSocket:', error);
+		return;
+	}
 
 	ws.onopen = function() {
 		console.log('WebSocket connected');
@@ -24,17 +34,22 @@ function connectWebSocket() {
 		handleWebSocketMessage(message);
 	};
 
-	ws.onclose = function() {
-		console.log('WebSocket disconnected');
+	ws.onclose = function(event) {
+		console.log('WebSocket disconnected', 'code:', event.code, 'reason:', event.reason);
 		// Try to reconnect
 		if (reconnectAttempts < maxReconnectAttempts) {
 			reconnectAttempts++;
+			console.log(`Reconnecting in ${2000 * reconnectAttempts}ms (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
 			setTimeout(connectWebSocket, 2000 * reconnectAttempts);
+		} else {
+			console.log('Max reconnection attempts reached. WebSocket disabled.');
 		}
 	};
 
 	ws.onerror = function(error) {
 		console.error('WebSocket error:', error);
+		// Don't log the error object itself as it doesn't contain useful info in browsers
+		console.error('WebSocket connection failed. Realtime updates will not be available.');
 	};
 }
 

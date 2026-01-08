@@ -14,12 +14,11 @@ import (
 	"time"
 
 	"github.com/alexedwards/scs/v2"
-	"github.com/google/go-github/v66/github"
+	"github.com/chainguard-dev/clog"
+	"github.com/google/go-github/v80/github"
 	"github.com/palantir/go-githubapp/githubapp"
 	"github.com/palantir/go-githubapp/oauth2"
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -31,22 +30,18 @@ const (
 func LoginCallback(c githubapp.Config, basePath string, sessions *scs.SessionManager) oauth2.LoginCallback {
 	return func(w http.ResponseWriter, r *http.Request, login *oauth2.Login) {
 		ctx := r.Context()
-		logger := zerolog.Ctx(ctx)
-		if logger.GetLevel() == zerolog.Disabled {
-			logger = &log.Logger
-		}
+		logger := clog.FromContext(ctx)
 
-		logger.Info().
-			Str("path", r.URL.Path).
-			Str("method", r.Method).
-			Msg("LoginCallback: OAuth callback received")
+		logger.Info("LoginCallback: OAuth callback received",
+			"path", r.URL.Path,
+			"method", r.Method)
 
 		client := github.NewClient(login.Client)
 
 		// Parse GitHub API URL
 		u, err := url.Parse(strings.TrimSuffix(c.V3APIURL, "/") + "/")
 		if err != nil {
-			logger.Error().Err(err).Msg("Failed to parse GitHub URL")
+			logger.Error("Failed to parse GitHub URL", "error", err)
 			http.Error(w, "Configuration error", http.StatusInternalServerError)
 			return
 		}
@@ -55,24 +50,23 @@ func LoginCallback(c githubapp.Config, basePath string, sessions *scs.SessionMan
 		// Get authenticated user
 		user, _, err := client.Users.Get(ctx, "")
 		if err != nil {
-			logger.Error().Err(err).Msg("Failed to get GitHub user")
+			logger.Error("Failed to get GitHub user", "error", err)
 			http.Error(w, "Failed to authenticate with GitHub", http.StatusUnauthorized)
 			return
 		}
 
-		logger.Info().Str("user", user.GetLogin()).Msg("User authenticated via OAuth")
+		logger.Info("User authenticated via OAuth", "user", user.GetLogin())
 
 		// Store username in session
 		sessions.Put(r.Context(), SessionKeyUsername, user.GetLogin())
-		logger.Info().Str("user", user.GetLogin()).Msg("Stored username in session")
+		logger.Info("Stored username in session", "user", user.GetLogin())
 
 		// Verify session was stored by immediately reading it back
 		stored := sessions.GetString(r.Context(), SessionKeyUsername)
-		logger.Info().
-			Str("user", user.GetLogin()).
-			Str("stored_value", stored).
-			Bool("matches", stored == user.GetLogin()).
-			Msg("Session verification check")
+		logger.Info("Session verification check",
+			"user", user.GetLogin(),
+			"stored_value", stored,
+			"matches", stored == user.GetLogin())
 
 		// Redirect to original page or home
 		target := sessions.PopString(r.Context(), SessionKeyRedirect)
@@ -80,10 +74,9 @@ func LoginCallback(c githubapp.Config, basePath string, sessions *scs.SessionMan
 			target = basePath + "/"
 		}
 
-		logger.Info().
-			Str("user", user.GetLogin()).
-			Str("redirect_to", target).
-			Msg("Redirecting after successful OAuth login")
+		logger.Info("Redirecting after successful OAuth login",
+			"user", user.GetLogin(),
+			"redirect_to", target)
 
 		http.Redirect(w, r, target, http.StatusFound)
 	}
@@ -94,47 +87,41 @@ func RequireLogin(sessions *scs.SessionManager, basePath string) func(http.Handl
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
-			logger := zerolog.Ctx(ctx)
-			if logger.GetLevel() == zerolog.Disabled {
-				logger = &log.Logger
-			}
+			logger := clog.FromContext(ctx)
 
 			// Skip authentication for OAuth-related paths
 			if strings.HasPrefix(r.URL.Path, "/login") ||
 				strings.HasPrefix(r.URL.Path, "/api/github/auth") ||
 				strings.HasPrefix(r.URL.Path, "/api/github/hook") {
-				logger.Debug().Str("path", r.URL.Path).Msg("Skipping auth check for unprotected route")
+				logger.Debug("Skipping auth check for unprotected route", "path", r.URL.Path)
 				next.ServeHTTP(w, r)
 				return
 			}
 
 			user := sessions.GetString(r.Context(), SessionKeyUsername)
-			logger.Info().
-				Str("path", r.URL.Path).
-				Str("user_from_session", user).
-				Bool("has_user", user != "").
-				Msg("RequireLogin: Checking authentication")
+			logger.Info("RequireLogin: Checking authentication",
+				"path", r.URL.Path,
+				"user_from_session", user,
+				"has_user", user != "")
 
 			if user == "" {
 				// Store redirect target (but not if already going to OAuth)
 				if !strings.HasPrefix(r.URL.Path, "/login") && !strings.HasPrefix(r.URL.Path, "/api/github/") {
 					sessions.Put(r.Context(), SessionKeyRedirect, r.URL.String())
-					logger.Info().
-						Str("redirect_from", r.URL.String()).
-						Msg("Storing redirect target in session")
+					logger.Info("Storing redirect target in session",
+						"redirect_from", r.URL.String())
 				}
 
 				// Redirect to OAuth login
-				logger.Info().
-					Str("path", r.URL.Path).
-					Str("redirect_to", basePath+"/api/github/auth").
-					Msg("User not authenticated, redirecting to OAuth login")
+				logger.Info("User not authenticated, redirecting to OAuth login",
+					"path", r.URL.Path,
+					"redirect_to", basePath+"/api/github/auth")
 				http.Redirect(w, r, basePath+"/api/github/auth", http.StatusFound)
 				return
 			}
 
 			// User is authenticated, continue
-			logger.Debug().Str("user", user).Str("path", r.URL.Path).Msg("User authenticated")
+			logger.Debug("User authenticated", "user", user, "path", r.URL.Path)
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -151,7 +138,7 @@ func GenerateSecretKey() (string, error) {
 
 // NewSessionManager creates a new session manager with the given configuration
 func NewSessionManager(ctx context.Context, secretKey string, lifetime int) (*scs.SessionManager, error) {
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	// Generate secret key if not provided
 	if secretKey == "" {
@@ -160,7 +147,7 @@ func NewSessionManager(ctx context.Context, secretKey string, lifetime int) (*sc
 		if err != nil {
 			return nil, err
 		}
-		logger.Warn().Msg("No session secret key provided, generated a random key (sessions will be invalidated on restart)")
+		logger.Warn("No session secret key provided, generated a random key (sessions will be invalidated on restart)")
 	}
 
 	sessions := scs.New()

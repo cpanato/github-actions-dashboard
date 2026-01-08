@@ -13,17 +13,18 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/alexedwards/scs/v2"
+	"github.com/chainguard-dev/clog"
 	"github.com/cpanato/github-actions-dashboard/server/auth"
 	"github.com/cpanato/github-actions-dashboard/server/handler"
 	"github.com/cpanato/github-actions-dashboard/server/websocket"
 	"github.com/palantir/go-githubapp/githubapp"
 	"github.com/palantir/go-githubapp/oauth2"
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
 )
 
 // Server represents the dashboard application server
@@ -41,12 +42,14 @@ type Server struct {
 // New creates a new Server instance
 func New(config *Config) (*Server, error) {
 	ctx := context.Background()
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
-	// Initialize database
+	// Initialize database (allow failure for initial startup)
 	db, err := InitDatabase(&config.Database)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to initialize database")
+		logger.Warn("Failed to initialize database, server will start without database", "error", err)
+		// Continue without database - it will be retried later
+		db = nil
 	}
 
 	// Create GitHub App client creator
@@ -56,7 +59,9 @@ func New(config *Config) (*Server, error) {
 		githubapp.WithClientTimeout(30),
 	)
 	if err != nil {
-		db.Close()
+		if db != nil {
+			db.Close()
+		}
 		return nil, errors.Wrap(err, "failed to create client creator")
 	}
 
@@ -67,7 +72,9 @@ func New(config *Config) (*Server, error) {
 	}
 	sessions, err := auth.NewSessionManager(ctx, config.Sessions.SecretKey, sessionLifetime)
 	if err != nil {
-		db.Close()
+		if db != nil {
+			db.Close()
+		}
 		return nil, errors.Wrap(err, "failed to create session manager")
 	}
 
@@ -96,7 +103,7 @@ func New(config *Config) (*Server, error) {
 		&handler.InstallationHandler{Base: *base},
 	}
 
-	logger.Info().Msg("Session-based authentication enabled")
+	logger.Info("Session-based authentication enabled")
 
 	// Load templates
 	templatesPath := filepath.Join(os.Getenv("KO_DATA_PATH"), "templates")
@@ -136,15 +143,19 @@ func New(config *Config) (*Server, error) {
 
 // Start starts the HTTP server
 func (s *Server) Start() error {
-	logger := zerolog.Ctx(context.Background()).With().
-		Str("component", "server").
-		Logger()
+	logger := clog.New(clog.FromContext(context.Background()).Handler()).With("component", "server")
+
+	// If database is nil, try to reconnect in background
+	if s.db == nil {
+		logger.Warn("Starting server without database connection, will retry in background")
+		go s.retryDatabaseConnection(logger)
+	}
 
 	// Start WebSocket hub
-	ctx := logger.WithContext(context.Background())
+	ctx := clog.WithLogger(context.Background(), logger)
 	if s.config.Options.EnableRealtime && s.wsHub != nil {
 		go s.wsHub.Run(ctx)
-		logger.Info().Msg("WebSocket hub started")
+		logger.Info("WebSocket hub started")
 	}
 
 	// Create HTTP mux
@@ -153,12 +164,12 @@ func (s *Server) Start() error {
 	// Logger middleware - adds logger to all request contexts
 	loggerMiddleware := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			reqLogger := logger.With().
-				Str("method", r.Method).
-				Str("path", r.URL.Path).
-				Str("remote_addr", r.RemoteAddr).
-				Logger()
-			ctx := reqLogger.WithContext(r.Context())
+			reqLogger := clog.New(logger.Handler()).With(
+				"method", r.Method,
+				"path", r.URL.Path,
+				"remote_addr", r.RemoteAddr,
+			)
+			ctx := clog.WithLogger(r.Context(), reqLogger)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -175,10 +186,9 @@ func (s *Server) Start() error {
 	if s.config.Server.PublicURL != "" {
 		// Override redirect URL to use public URL
 		oauthConfig.RedirectURL = s.config.Server.PublicURL + "/login/callback"
-		logger.Info().
-			Str("public_url", s.config.Server.PublicURL).
-			Str("redirect_url", oauthConfig.RedirectURL).
-			Msg("Using explicit OAuth redirect URL from config")
+		logger.Info("Using explicit OAuth redirect URL from config",
+			"public_url", s.config.Server.PublicURL,
+			"redirect_url", oauthConfig.RedirectURL)
 	}
 
 	oauthHandler := oauth2.NewHandler(
@@ -187,11 +197,11 @@ func (s *Server) Start() error {
 	)
 	// Register at /login/callback to match GitHub App callback URL configuration
 	mux.Handle("/login/callback", loggerMiddleware(sessionMiddleware(oauthHandler)))
-	logger.Info().Str("path", "/login/callback").Msg("OAuth callback route registered (unprotected)")
+	logger.Info("OAuth callback route registered (unprotected)", "path", "/login/callback")
 
 	// Also register the OAuth initiation route
 	mux.Handle("/api/github/auth", loggerMiddleware(sessionMiddleware(oauthHandler)))
-	logger.Info().Str("path", "/api/github/auth").Msg("OAuth initiation route registered (unprotected)")
+	logger.Info("OAuth initiation route registered (unprotected)", "path", "/api/github/auth")
 
 	// GitHub webhook endpoint (unprotected, no sessions needed)
 	webhookHandler := githubapp.NewEventDispatcher(s.handlers, s.config.Github.App.WebhookSecret, githubapp.WithScheduler(
@@ -207,8 +217,9 @@ func (s *Server) Start() error {
 
 	// WebSocket endpoint (protected)
 	if s.config.Options.EnableRealtime && s.wsHub != nil {
-		mux.Handle("/ws", requireAuth(http.HandlerFunc(s.wsHub.ServeWS)))
-		logger.Info().Msg("WebSocket endpoint enabled at /ws (protected)")
+		wsHandler := requireAuth(http.HandlerFunc(s.wsHub.ServeWS))
+		mux.Handle("/ws", wsHandler)
+		logger.Info("WebSocket endpoint enabled at /ws and /ws/ (protected)")
 	}
 
 	// Static assets (unprotected, but could be protected if desired)
@@ -235,10 +246,9 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Server.Address, s.config.Server.Port)
 
 	// Start server with logger and session middleware wrapping everything
-	logger.Info().
-		Str("address", addr).
-		Bool("auth_enabled", true).
-		Msg("Starting server with authentication")
+	logger.Info("Starting server with authentication",
+		"address", addr,
+		"auth_enabled", true)
 
 	return http.ListenAndServe(addr, loggerMiddleware(sessionMiddleware(mux)))
 }
@@ -290,23 +300,22 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 // handleRepositories returns repository list
 func (s *Server) handleRepositories(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	// Get repositories with statistics
 	repos, err := GetRepositories(ctx, s.db, true)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get repositories")
+		logger.Error("Failed to get repositories", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	logger.Info().Int("count", len(repos)).Msg("Retrieved repositories")
+	logger.Info("Retrieved repositories", "count", len(repos))
 	if len(repos) > 0 {
-		logger.Info().
-			Str("first_repo", repos[0].FullName).
-			Int("total_runs", repos[0].TotalRuns).
-			Float64("success_rate", repos[0].SuccessRate).
-			Msg("First repository details")
+		logger.Info("First repository details",
+			"first_repo", repos[0].FullName,
+			"total_runs", repos[0].TotalRuns,
+			"success_rate", repos[0].SuccessRate)
 	}
 
 	// Check if this is an HTMX request (expects HTML partial)
@@ -315,7 +324,7 @@ func (s *Server) handleRepositories(w http.ResponseWriter, r *http.Request) {
 		if err := s.tmpl.ExecuteTemplate(w, "repositories.html", map[string]interface{}{
 			"repositories": repos,
 		}); err != nil {
-			logger.Error().Err(err).Msg("Failed to render template")
+			logger.Error("Failed to render template", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return
@@ -324,7 +333,7 @@ func (s *Server) handleRepositories(w http.ResponseWriter, r *http.Request) {
 	// Fallback to JSON for API requests
 	w.Header().Set("Content-Type", "application/json")
 	if err := writeJSON(w, map[string]interface{}{"repositories": repos}); err != nil {
-		logger.Error().Err(err).Msg("Failed to write JSON response")
+		logger.Error("Failed to write JSON response", "error", err)
 	}
 }
 
@@ -332,7 +341,7 @@ func (s *Server) handleRepositories(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	// Parse query parameters
 	opts := WorkflowRunOptions{
@@ -370,7 +379,7 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 	// Get workflow runs
 	runs, err := GetWorkflowRuns(ctx, s.db, opts)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get workflow runs")
+		logger.Error("Failed to get workflow runs", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -380,8 +389,9 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		if err := s.tmpl.ExecuteTemplate(w, "workflows.html", map[string]interface{}{
 			"workflows": runs,
+			"count":     len(runs),
 		}); err != nil {
-			logger.Error().Err(err).Msg("Failed to render template")
+			logger.Error("Failed to render template", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return
@@ -390,7 +400,7 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 	// Fallback to JSON for API requests
 	w.Header().Set("Content-Type", "application/json")
 	if err := writeJSON(w, map[string]interface{}{"workflows": runs}); err != nil {
-		logger.Error().Err(err).Msg("Failed to write JSON response")
+		logger.Error("Failed to write JSON response", "error", err)
 	}
 }
 
@@ -404,7 +414,7 @@ func writeJSON(w http.ResponseWriter, data interface{}) error {
 // handleAnalytics returns analytics data
 func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	var repoID int64
 	if id := r.URL.Query().Get("repository_id"); id != "" {
@@ -418,7 +428,7 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 
 	analytics, err := GetAnalytics(ctx, s.db, repoID, days)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get analytics")
+		logger.Error("Failed to get analytics", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -429,7 +439,7 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 		if err := s.tmpl.ExecuteTemplate(w, "analytics.html", map[string]interface{}{
 			"analytics": analytics,
 		}); err != nil {
-			logger.Error().Err(err).Msg("Failed to render analytics template")
+			logger.Error("Failed to render analytics template", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return
@@ -443,7 +453,7 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 // handleFlakyTests returns flaky test data
 func (s *Server) handleFlakyTests(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	var repoID int64
 	if id := r.URL.Query().Get("repository_id"); id != "" {
@@ -462,7 +472,7 @@ func (s *Server) handleFlakyTests(w http.ResponseWriter, r *http.Request) {
 
 	flakyTests, err := GetFlakyTests(ctx, s.db, repoID, minRuns, days)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get flaky tests")
+		logger.Error("Failed to get flaky tests", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -473,7 +483,7 @@ func (s *Server) handleFlakyTests(w http.ResponseWriter, r *http.Request) {
 		if err := s.tmpl.ExecuteTemplate(w, "flaky-tests.html", map[string]interface{}{
 			"flaky_tests": flakyTests,
 		}); err != nil {
-			logger.Error().Err(err).Msg("Failed to render template")
+			logger.Error("Failed to render template", "error", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return
@@ -487,7 +497,7 @@ func (s *Server) handleFlakyTests(w http.ResponseWriter, r *http.Request) {
 // handleTrends returns trend data
 func (s *Server) handleTrends(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	var repoID int64
 	if id := r.URL.Query().Get("repository_id"); id != "" {
@@ -501,7 +511,7 @@ func (s *Server) handleTrends(w http.ResponseWriter, r *http.Request) {
 
 	trends, err := GetTrendData(ctx, s.db, repoID, days)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get trends")
+		logger.Error("Failed to get trends", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -512,7 +522,7 @@ func (s *Server) handleTrends(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRepositoryDetail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	// Extract owner/repo from path: /repository/owner/repo
 	path := strings.TrimPrefix(r.URL.Path, "/repository/")
@@ -529,7 +539,7 @@ func (s *Server) handleRepositoryDetail(w http.ResponseWriter, r *http.Request) 
 	// Get repository
 	repos, err := GetRepositories(ctx, s.db, false)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get repositories")
+		logger.Error("Failed to get repositories", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -547,24 +557,112 @@ func (s *Server) handleRepositoryDetail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Get workflow runs for this repository (last 50)
-	runs, err := GetWorkflowRuns(ctx, s.db, WorkflowRunOptions{
+	// Parse limit from query parameter (default: 50)
+	limit := 50
+	if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+
+	// Parse branch filter from query parameter
+	branch := r.URL.Query().Get("branch")
+
+	// Parse workflow filter from query parameter
+	workflow := r.URL.Query().Get("workflow")
+
+	// Get all workflow runs for this repository (up to a reasonable max)
+	// We need to get all runs first, then limit per workflow to ensure all workflows are shown
+	allRuns, err := GetWorkflowRuns(ctx, s.db, WorkflowRunOptions{
 		RepositoryID: repo.ID,
-		Limit:        50,
+		HeadBranch:   branch,
+		WorkflowName: workflow,
+		Limit:        10000, // Get a large number to ensure we have all workflows
 	})
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get workflow runs")
+		logger.Error("Failed to get workflow runs", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
+	}
+
+	// Build list of unique branches for the filter dropdown
+	branchesMap := make(map[string]bool)
+	workflowsMap := make(map[string]bool)
+	for _, run := range allRuns {
+		if run.HeadBranch != "" {
+			branchesMap[run.HeadBranch] = true
+		}
+		if run.WorkflowName != "" {
+			workflowsMap[run.WorkflowName] = true
+		}
+	}
+	branches := make([]string, 0, len(branchesMap))
+	for b := range branchesMap {
+		branches = append(branches, b)
+	}
+	workflows := make([]string, 0, len(workflowsMap))
+	for w := range workflowsMap {
+		workflows = append(workflows, w)
+	}
+
+	// Group runs by workflow name, limiting each workflow to the specified limit
+	groupedRuns := make(map[string][]WorkflowRun)
+	workflowOrder := []string{} // Preserve order of first appearance
+	for _, run := range allRuns {
+		if _, exists := groupedRuns[run.WorkflowName]; !exists {
+			workflowOrder = append(workflowOrder, run.WorkflowName)
+		}
+		// Only add if we haven't reached the limit for this workflow
+		if len(groupedRuns[run.WorkflowName]) < limit {
+			groupedRuns[run.WorkflowName] = append(groupedRuns[run.WorkflowName], run)
+		}
+	}
+
+	// Flatten for the runs array (for backwards compatibility if needed)
+	runs := make([]WorkflowRun, 0)
+	for _, wfName := range workflowOrder {
+		runs = append(runs, groupedRuns[wfName]...)
 	}
 
 	// Render template
 	w.Header().Set("Content-Type", "text/html")
 	if err := s.tmpl.ExecuteTemplate(w, "repository.html", map[string]interface{}{
-		"repository": repo,
-		"runs":       runs,
+		"repository":      repo,
+		"runs":            runs,
+		"groupedRuns":     groupedRuns,
+		"workflowOrder":   workflowOrder,
+		"branches":        branches,
+		"workflows":       workflows,
+		"currentBranch":   branch,
+		"currentWorkflow": workflow,
+		"currentLimit":    limit,
 	}); err != nil {
-		logger.Error().Err(err).Msg("Failed to render repository template")
+		logger.Error("Failed to render repository template", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
+}
+
+// retryDatabaseConnection attempts to connect to the database in a loop
+func (s *Server) retryDatabaseConnection(logger *clog.Logger) {
+	retryDelay := 5 * time.Second
+	maxRetries := 60 // Try for 5 minutes
+
+	for i := 0; i < maxRetries; i++ {
+		logger.Info("Attempting to connect to database", "attempt", i+1, "max", maxRetries)
+
+		db, err := InitDatabase(&s.config.Database)
+		if err != nil {
+			logger.Warn("Database connection failed, will retry", "error", err, "retry_in", retryDelay)
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		// Success! Update the server's database connection
+		s.db = db
+		s.base.DB = db
+		logger.Info("Database connection established successfully")
+		return
+	}
+
+	logger.Error("Failed to connect to database after maximum retries", "max_retries", maxRetries)
 }
