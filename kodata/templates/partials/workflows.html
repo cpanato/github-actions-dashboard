@@ -1,5 +1,8 @@
 {{if .workflows}}
 <div class="bg-white rounded-lg shadow overflow-hidden">
+	<div class="px-6 py-3 bg-gray-50 border-b border-gray-200">
+		<p class="text-sm text-gray-600">Showing <span class="font-semibold text-gray-900">{{.count}}</span> workflow run{{if ne .count 1}}s{{end}}</p>
+	</div>
 	<div class="overflow-x-auto">
 		<table class="min-w-full divide-y divide-gray-200">
 			<thead class="bg-gray-50">
@@ -14,9 +17,9 @@
 			<tbody class="bg-white divide-y divide-gray-200">
 				{{range .workflows}}
 				<tr class="hover:bg-gray-50">
-					<td class="px-6 py-4 whitespace-nowrap">
-						<div class="flex items-center">
-							<a href="{{.HTMLURL}}" target="_blank" class="text-sm font-medium text-gray-900 hover:text-blue-600">
+					<td class="px-6 py-4">
+						<div class="flex items-center max-w-md">
+							<a href="{{.HTMLURL}}" target="_blank" class="text-sm font-medium text-gray-900 hover:text-blue-600 truncate" title="{{.WorkflowName}}">
 								{{.WorkflowName}}
 							</a>
 						</div>

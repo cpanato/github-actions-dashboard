@@ -8,9 +8,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/google/go-github/v66/github"
+	"github.com/chainguard-dev/clog"
+	"github.com/google/go-github/v80/github"
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
 )
 
 // CheckRunHandler processes check_run webhook events
@@ -25,7 +25,7 @@ func (h *CheckRunHandler) Handles() []string {
 
 // Handle processes a check_run webhook event
 func (h *CheckRunHandler) Handle(ctx context.Context, eventType, deliveryID string, payload []byte) error {
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
 
 	var event github.CheckRunEvent
 	if err := json.Unmarshal(payload, &event); err != nil {
@@ -34,26 +34,23 @@ func (h *CheckRunHandler) Handle(ctx context.Context, eventType, deliveryID stri
 
 	// Only process completed check runs
 	if event.GetAction() != "completed" {
-		logger.Debug().
-			Str("action", event.GetAction()).
-			Msg("Skipping non-completed check_run")
+		logger.Debug("Skipping non-completed check_run", "action", event.GetAction())
 		return nil
 	}
 
 	checkRun := event.GetCheckRun()
 	repo := event.GetRepo()
 
-	logger.Info().
-		Int64("check_run_id", checkRun.GetID()).
-		Str("name", checkRun.GetName()).
-		Str("status", checkRun.GetStatus()).
-		Str("conclusion", checkRun.GetConclusion()).
-		Str("repository", repo.GetFullName()).
-		Msg("Processing completed check run")
+	logger.Info("Processing completed check run",
+		"check_run_id", checkRun.GetID(),
+		"name", checkRun.GetName(),
+		"status", checkRun.GetStatus(),
+		"conclusion", checkRun.GetConclusion(),
+		"repository", repo.GetFullName())
 
 	// Store check run in database
 	if err := h.storeCheckRun(ctx, checkRun, repo); err != nil {
-		logger.Error().Err(err).Msg("Failed to store check run")
+		logger.Error("Failed to store check run", "error", err)
 		return err
 	}
 
@@ -76,7 +73,13 @@ func (h *CheckRunHandler) Handle(ctx context.Context, eventType, deliveryID stri
 
 // storeCheckRun saves check run data to the database
 func (h *CheckRunHandler) storeCheckRun(ctx context.Context, checkRun *github.CheckRun, repo *github.Repository) error {
-	logger := zerolog.Ctx(ctx)
+	logger := clog.FromContext(ctx)
+
+	// Check if database is available
+	if h.DB == nil {
+		logger.Warn("Database not available, skipping check run storage")
+		return errors.New("database not available")
+	}
 
 	// Ensure repository exists
 	_, err := h.DB.ExecContext(ctx, `
@@ -113,11 +116,10 @@ func (h *CheckRunHandler) storeCheckRun(ctx context.Context, checkRun *github.Ch
 		return errors.Wrap(err, "failed to insert check run")
 	}
 
-	logger.Info().
-		Int64("check_run_id", checkRun.GetID()).
-		Str("name", checkRun.GetName()).
-		Str("conclusion", checkRun.GetConclusion()).
-		Msg("Stored check run")
+	logger.Info("Stored check run",
+		"check_run_id", checkRun.GetID(),
+		"name", checkRun.GetName(),
+		"conclusion", checkRun.GetConclusion())
 
 	return nil
 }

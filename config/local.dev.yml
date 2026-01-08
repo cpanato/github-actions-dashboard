@@ -1,0 +1,39 @@
+server:
+  address: "0.0.0.0"
+  port: 8080
+  # For local OAuth testing, use ngrok or similar
+  # public_url: "https://your-ngrok-url.ngrok.io"
+
+logging:
+  level: "debug"
+  text: true
+
+database:
+  driver: "postgres"
+  url: "host=localhost port=5432 user=dashboard-user password=local-dev-password dbname=dashboard sslmode=disable"
+  max_open_conns: 25
+  max_idle_conns: 5
+
+cache:
+  workflow_ttl: 900s  # 15 minutes
+  max_entries: 10000
+
+options:
+  default_time_window: "24h"
+  max_repos_per_page: 50
+  enable_realtime: true
+
+# Sessions configuration
+sessions:
+  # Generate a random secret key for local dev:
+  # openssl rand -base64 32
+  secret_key: "local-dev-secret-key-change-me-in-production"
+  lifetime: 86400  # 24 hours
+
+# GitHub App configuration
+# These should be set via environment variables:
+# export DASHBOARD_GITHUB_APP_INTEGRATION_ID=your-app-id
+# export DASHBOARD_GITHUB_APP_PRIVATE_KEY=/path/to/private-key.pem
+# export DASHBOARD_GITHUB_APP_WEBHOOK_SECRET=your-webhook-secret
+# export DASHBOARD_GITHUB_OAUTH_CLIENT_ID=your-oauth-client-id
+# export DASHBOARD_GITHUB_OAUTH_CLIENT_SECRET=your-oauth-client-secret
