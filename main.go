@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -56,7 +57,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		input := fmt.Sprintf("%s/templates/input.html", http.Dir(os.Getenv("KO_DATA_PATH")))
-		http.ServeFile(w, r, input)
+		http.ServeFile(w, r, input) //nolint:gosec // KO_DATA_PATH is trusted deployment configuration, not request input.
 	case "POST":
 		if err := r.ParseForm(); err != nil {
 			fmt.Fprintf(w, "ParseForm() err: %v", err)
@@ -81,7 +82,7 @@ func serveTemplate(w http.ResponseWriter, _ *http.Request, owner, repo string) {
 	err := tmpl.ExecuteTemplate(w, "dashboard", dataReport)
 	if err != nil {
 		// Log the detailed error
-		log.Print(err.Error())
+		slog.Error("render dashboard", "error", err)
 		http.Error(w, http.StatusText(500), 500)
 	}
 }
