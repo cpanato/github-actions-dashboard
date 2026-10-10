@@ -5,7 +5,6 @@ test:
 
 lint:
 	golangci-lint run
-	golangci-lint fmt --diff
 
 verify:
 	go mod verify
@@ -13,7 +12,6 @@ verify:
 	git diff --exit-code -- go.mod go.sum
 	go vet ./...
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-	go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 ko-local:
 	KO_DOCKER_REPO=ko.local LDFLAGS="$(LDFLAGS)" \

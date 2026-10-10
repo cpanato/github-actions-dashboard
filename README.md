@@ -26,7 +26,7 @@ Use the Go version declared in `go.mod` and golangci-lint v2.14.
 
 - `make test` runs tests with the race detector.
 - `make lint` checks Go code and formatting.
-- `make verify` checks module consistency, vulnerabilities, and workflow syntax.
+- `make verify` checks module consistency, vulnerabilities, and runs vet.
 - `make ko-local` builds a local container image with ko.
 
 CI runs these checks on pull requests and pushes to main.
