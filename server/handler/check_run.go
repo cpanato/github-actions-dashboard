@@ -24,7 +24,7 @@ func (h *CheckRunHandler) Handles() []string {
 }
 
 // Handle processes a check_run webhook event
-func (h *CheckRunHandler) Handle(ctx context.Context, eventType, deliveryID string, payload []byte) error {
+func (h *CheckRunHandler) Handle(ctx context.Context, _, _ string, payload []byte) error {
 	logger := clog.FromContext(ctx)
 
 	var event github.CheckRunEvent
@@ -65,7 +65,9 @@ func (h *CheckRunHandler) Handle(ctx context.Context, eventType, deliveryID stri
 			"repository_id":        repo.GetID(),
 			"repository_full_name": repo.GetFullName(),
 		}
-		h.WSHub.Broadcast("check_run_update", update)
+		if err := h.WSHub.Broadcast("check_run_update", update); err != nil {
+			logger.Warn("Failed to broadcast check run update", "error", err)
+		}
 	}
 
 	return nil

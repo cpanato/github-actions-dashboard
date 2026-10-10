@@ -3,17 +3,23 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/chainguard-dev/clog"
-
 	"github.com/cpanato/github-actions-dashboard/server"
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("Dashboard stopped with an error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	// Parse command line flags
 	configPath := flag.String("config", "", "path to configuration file")
 	flag.Parse()
@@ -25,9 +31,7 @@ func main() {
 		})))
 	}
 
-	ctx := context.Background()
-	logger := clog.New(slog.Default().Handler()).With("app", "github-actions-dashboard")
-	ctx = clog.WithLogger(ctx, logger)
+	logger := slog.Default().With("app", "github-actions-dashboard")
 
 	// Load configuration
 	var cfg *server.Config
@@ -37,13 +41,11 @@ func main() {
 		// Load from file
 		configBytes, readErr := os.ReadFile(*configPath)
 		if readErr != nil {
-			logger.Error("Failed to read config file", "error", readErr, "path", *configPath)
-			os.Exit(1)
+			return fmt.Errorf("failed to read config file %q: %w", *configPath, readErr)
 		}
 		cfg, err = server.ParseConfig(configBytes)
 		if err != nil {
-			logger.Error("Failed to parse config", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("failed to parse config: %w", err)
 		}
 		logger.Info("Loaded configuration from file", "config", *configPath)
 	} else {
@@ -57,8 +59,7 @@ logging:
   text: false
 `))
 		if err != nil {
-			logger.Error("Failed to parse default config", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("failed to parse default config: %w", err)
 		}
 		logger.Info("Using environment-based configuration")
 	}
@@ -87,30 +88,31 @@ logging:
 			Level: logLevel,
 		})))
 	}
+	logger = slog.Default().With("app", "github-actions-dashboard")
 
 	// Create and start server
 	srv, err := server.New(cfg)
 	if err != nil {
-		logger.Error("Failed to create server", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to create server: %w", err)
 	}
 	defer srv.Close()
 
 	// Handle graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	go func() {
-		<-sigChan
+		<-ctx.Done()
 		logger.Info("Shutting down gracefully...")
-		srv.Close()
-		os.Exit(0)
+		if err := srv.Close(); err != nil {
+			logger.Error("Failed to shut down server", "error", err)
+		}
 	}()
 
 	// Start server
 	logger.Info("Starting GitHub Actions Dashboard")
 	if err := srv.Start(); err != nil {
-		logger.Error("Server failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("server failed: %w", err)
 	}
+	return nil
 }

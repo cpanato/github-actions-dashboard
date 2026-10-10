@@ -7,7 +7,7 @@ package server
 import (
 	"database/sql"
 	"fmt"
-	"strings"
+	"log/slog"
 	"time"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
@@ -33,7 +33,7 @@ func InitDatabase(cfg *DatabaseConfig) (*sql.DB, error) {
 		pingErr = db.Ping()
 		if pingErr == nil {
 			if i > 0 {
-				fmt.Printf("Database connection established after %d attempt(s)\n", i+1)
+				slog.Info("Database connection established after retry", "attempts", i+1)
 			}
 			break
 		}
@@ -41,8 +41,7 @@ func InitDatabase(cfg *DatabaseConfig) (*sql.DB, error) {
 		if i < maxRetries-1 {
 			// Only log every 3rd attempt to reduce noise
 			if i%3 == 0 || i >= maxRetries-2 {
-				fmt.Printf("Database ping failed (attempt %d/%d): %v. Retrying in %v...\n",
-					i+1, maxRetries, pingErr, retryDelay)
+				slog.Warn("Database ping failed; retrying", "attempt", i+1, "max_attempts", maxRetries, "error", pingErr, "retry_delay", retryDelay)
 			}
 			time.Sleep(retryDelay)
 		}
@@ -53,10 +52,10 @@ func InitDatabase(cfg *DatabaseConfig) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to ping database after %d attempts: %w", maxRetries, pingErr)
 	}
 
-	fmt.Println("Database connection established successfully")
+	slog.Info("Database connection established")
 
 	// Initialize schema
-	if err := initSchema(db, cfg.Driver); err != nil {
+	if err := initSchema(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
@@ -65,35 +64,9 @@ func InitDatabase(cfg *DatabaseConfig) (*sql.DB, error) {
 }
 
 // initSchema creates the necessary tables if they don't exist
-func initSchema(db *sql.DB, driver string) error {
+func initSchema(db *sql.DB) error {
 	_, err := db.Exec(postgresSchema)
 	return err
-}
-
-// maskPassword redacts password from connection string for logging
-func maskPassword(connStr string) string {
-	if len(connStr) == 0 {
-		return ""
-	}
-	// For Unix socket format: host=/cloudsql/... password=xxx
-	if idx := strings.Index(connStr, "password="); idx != -1 {
-		end := strings.Index(connStr[idx:], " ")
-		if end == -1 {
-			return connStr[:idx] + "password=***"
-		}
-		return connStr[:idx] + "password=*** " + connStr[idx+end:]
-	}
-	// For URL format: postgres://user:password@host
-	if strings.Contains(connStr, "://") && strings.Contains(connStr, ":") && strings.Contains(connStr, "@") {
-		parts := strings.Split(connStr, "@")
-		if len(parts) == 2 {
-			userPart := strings.Split(parts[0], ":")
-			if len(userPart) >= 3 {
-				return strings.Join(userPart[:len(userPart)-1], ":") + ":***@" + parts[1]
-			}
-		}
-	}
-	return connStr
 }
 
 const postgresSchema = `

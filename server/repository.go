@@ -128,59 +128,34 @@ func GetWorkflowRuns(ctx context.Context, db *sql.DB, opts WorkflowRunOptions) (
 		       r.full_name
 		FROM workflow_runs wr
 		JOIN repositories r ON wr.repository_id = r.id
-		WHERE 1=1
+		WHERE ($1::BIGINT = 0 OR wr.repository_id = $1)
+		  AND ($2::TEXT = '' OR wr.status = $2)
+		  AND ($3::TEXT = '' OR wr.conclusion = $3)
+		  AND ($4::TEXT = '' OR wr.head_branch = $4)
+		  AND ($5::TEXT = '' OR wr.workflow_name = $5)
+		  AND ($6::TEXT = '' OR wr.event = $6)
+		  AND ($7::TIMESTAMP IS NULL OR wr.created_at >= $7)
+		ORDER BY wr.created_at DESC
+		LIMIT NULLIF($8::INTEGER, 0)
 	`
 
-	args := []interface{}{}
-	paramIndex := 1
-
-	if opts.RepositoryID > 0 {
-		query += fmt.Sprintf(` AND wr.repository_id = $%d`, paramIndex)
-		args = append(args, opts.RepositoryID)
-		paramIndex++
-	}
-
-	if opts.Status != "" {
-		query += fmt.Sprintf(` AND wr.status = $%d`, paramIndex)
-		args = append(args, opts.Status)
-		paramIndex++
-	}
-
-	if opts.Conclusion != "" {
-		query += fmt.Sprintf(` AND wr.conclusion = $%d`, paramIndex)
-		args = append(args, opts.Conclusion)
-		paramIndex++
-	}
-
-	if opts.HeadBranch != "" {
-		query += fmt.Sprintf(` AND wr.head_branch = $%d`, paramIndex)
-		args = append(args, opts.HeadBranch)
-		paramIndex++
-	}
-
-	if opts.WorkflowName != "" {
-		query += fmt.Sprintf(` AND wr.workflow_name = $%d`, paramIndex)
-		args = append(args, opts.WorkflowName)
-		paramIndex++
-	}
-
-	if opts.Event != "" {
-		query += fmt.Sprintf(` AND wr.event = $%d`, paramIndex)
-		args = append(args, opts.Event)
-		paramIndex++
-	}
-
+	var since interface{}
 	if !opts.Since.IsZero() {
-		query += fmt.Sprintf(` AND wr.created_at >= $%d`, paramIndex)
-		args = append(args, opts.Since)
-		paramIndex++
+		since = opts.Since
 	}
-
-	query += ` ORDER BY wr.created_at DESC`
-
-	if opts.Limit > 0 {
-		query += fmt.Sprintf(` LIMIT $%d`, paramIndex)
-		args = append(args, opts.Limit)
+	limit := opts.Limit
+	if limit < 0 {
+		limit = 0
+	}
+	args := []interface{}{
+		opts.RepositoryID,
+		opts.Status,
+		opts.Conclusion,
+		opts.HeadBranch,
+		opts.WorkflowName,
+		opts.Event,
+		since,
+		limit,
 	}
 
 	rows, err := db.QueryContext(ctx, query, args...)

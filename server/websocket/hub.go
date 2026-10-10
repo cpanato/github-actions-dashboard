@@ -7,6 +7,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -132,17 +133,19 @@ func (c *Client) readPump() {
 		c.conn.Close()
 	}()
 
-	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	if err := c.conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+		slog.Warn("Failed to set WebSocket read deadline", "error", err)
+		return
+	}
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
+		return c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	})
 
 	for {
 		_, _, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				// Log unexpected errors
+				slog.Warn("Unexpected WebSocket close", "error", err)
 			}
 			break
 		}
@@ -160,10 +163,15 @@ func (c *Client) writePump() {
 	for {
 		select {
 		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				slog.Warn("Failed to set WebSocket write deadline", "error", err)
+				return
+			}
 			if !ok {
 				// Hub closed the channel
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				if err := c.conn.WriteMessage(websocket.CloseMessage, []byte{}); err != nil {
+					slog.Debug("Failed to write WebSocket close message", "error", err)
+				}
 				return
 			}
 
@@ -171,14 +179,23 @@ func (c *Client) writePump() {
 			if err != nil {
 				return
 			}
-			w.Write(message)
+			if _, err := w.Write(message); err != nil {
+				slog.Warn("Failed to write WebSocket message", "error", err)
+				if closeErr := w.Close(); closeErr != nil {
+					slog.Debug("Failed to close WebSocket writer", "error", closeErr)
+				}
+				return
+			}
 
 			if err := w.Close(); err != nil {
 				return
 			}
 
 		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				slog.Warn("Failed to set WebSocket write deadline", "error", err)
+				return
+			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}

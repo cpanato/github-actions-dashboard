@@ -6,6 +6,7 @@ package server
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -85,9 +86,6 @@ type DashboardOptions struct {
 }
 
 type SessionsConfig struct {
-	// SecretKey for session encryption (required for production, auto-generated if empty)
-	SecretKey string `yaml:"secret_key"`
-
 	// Lifetime in seconds (default: 86400 = 24 hours)
 	Lifetime int `yaml:"lifetime"`
 }
@@ -141,42 +139,40 @@ func ParseConfig(bytes []byte) (*Config, error) {
 	// Server configuration from environment
 	if v, ok := os.LookupEnv(envPrefix + "PUBLIC_URL"); ok {
 		c.Server.PublicURL = v
-		fmt.Printf("DEBUG: Set public URL from env: %s\n", v)
+		slog.Debug("Loaded public URL from environment")
 	}
-
-	fmt.Printf("DEBUG: Set server address from env: %s\n", c.Server.Address)
 
 	// Database configuration from environment
 	if v, ok := os.LookupEnv(envPrefix + "DATABASE_DRIVER"); ok {
 		c.Database.Driver = v
-		fmt.Printf("DEBUG: Set database driver from env: %s\n", v)
+		slog.Debug("Loaded database driver from environment")
 	}
 	if v, ok := os.LookupEnv(envPrefix + "DATABASE_URL"); ok {
 		c.Database.URL = v
-		fmt.Printf("DEBUG: Set database URL from env (length: %d)\n", len(v))
+		slog.Debug("Loaded database URL from environment")
 	}
 	if v, ok := os.LookupEnv(envPrefix + "DATABASE_CLOUD_SQL_INSTANCE"); ok {
 		c.Database.CloudSQLInstance = v
 		c.Database.Driver = "postgres" // Cloud SQL is always PostgreSQL
-		fmt.Printf("DEBUG: Set Cloud SQL instance: %s\n", v)
+		slog.Debug("Loaded Cloud SQL instance from environment")
 	}
 	if v, ok := os.LookupEnv(envPrefix + "DATABASE_NAME"); ok {
 		c.Database.DBName = v
-		fmt.Printf("DEBUG: Set database name: %s\n", v)
+		slog.Debug("Loaded database name from environment")
 	}
 	if v, ok := os.LookupEnv(envPrefix + "DATABASE_USER"); ok {
 		c.Database.User = v
-		fmt.Printf("DEBUG: Set database user: %s\n", v)
+		slog.Debug("Loaded database user from environment")
 	}
 	if v, ok := os.LookupEnv(envPrefix + "DATABASE_PASSWORD"); ok {
 		c.Database.Password = v
-		fmt.Printf("DEBUG: Set database password (length: %d)\n", len(v))
+		slog.Debug("Loaded database password from environment")
 	}
 
 	// Build Cloud SQL connection string if not provided
 	if c.Database.URL == "" && c.Database.CloudSQLInstance != "" {
 		c.Database.URL = buildCloudSQLConnectionString(&c.Database)
-		fmt.Printf("DEBUG: Built Cloud SQL connection string for instance: %s\n", c.Database.CloudSQLInstance)
+		slog.Debug("Built Cloud SQL connection string")
 	}
 
 	// Default to PostgreSQL

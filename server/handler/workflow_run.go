@@ -24,7 +24,7 @@ func (h *WorkflowRunHandler) Handles() []string {
 }
 
 // Handle processes a workflow_run webhook event
-func (h *WorkflowRunHandler) Handle(ctx context.Context, eventType, deliveryID string, payload []byte) error {
+func (h *WorkflowRunHandler) Handle(ctx context.Context, _, _ string, payload []byte) error {
 	logger := clog.FromContext(ctx)
 
 	var event github.WorkflowRunEvent

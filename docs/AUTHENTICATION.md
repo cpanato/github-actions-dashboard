@@ -22,7 +22,6 @@ When a user tries to access the dashboard without being authenticated:
 
 - **Cookie-based sessions**: Secure, HTTP-only cookies
 - **Lifetime**: Default 24 hours (configurable)
-- **Secret key**: 32-byte randomly generated key for session encryption
 - **Auto-renewal**: Sessions renew on activity
 
 ### 3. Access Control
@@ -47,24 +46,8 @@ Add to your `config.yml`:
 
 ```yaml
 sessions:
-  # Secret key for session encryption (base64-encoded 32-byte key)
-  # Leave empty for auto-generated (development only)
-  # In production, set via environment variable
-  secret_key: ""
-  
   # Session lifetime in seconds (default: 86400 = 24 hours)
   lifetime: 86400
-```
-
-### Environment Variables
-
-```bash
-# Generate a secure secret key
-openssl rand -base64 32
-
-# Set in environment
-export DASHBOARD_SESSIONS_SECRET_KEY="your-base64-encoded-key"
-export DASHBOARD_SESSIONS_LIFETIME=86400  # 24 hours
 ```
 
 ### GitHub App OAuth Configuration
@@ -107,24 +90,18 @@ These routes are publicly accessible:
 
 ### Production Deployment
 
-1. **Use a secure secret key**:
-   ```bash
-   # Generate and store in Secret Manager
-   openssl rand -base64 32 | gcloud secrets create dashboard-session-key --data-file=-
-   ```
-
-2. **Enable HTTPS**:
+1. **Enable HTTPS**:
    - Cloud Run automatically provides HTTPS
-   - Set `sessions.Cookie.Secure = true` in production
+  - Configure the session cookie with the `Secure` attribute in production
 
-3. **Secure cookie settings**:
+2. **Secure cookie settings**:
    ```go
    sessions.Cookie.HttpOnly = true       // Prevent JavaScript access
    sessions.Cookie.SameSite = http.SameSiteLaxMode  // CSRF protection
    sessions.Cookie.Secure = true         // HTTPS only
    ```
 
-4. **Set appropriate session lifetime**:
+3. **Set appropriate session lifetime**:
    - Development: 24 hours (convenient)
    - Production: 8 hours (more secure)
    - High-security: 1 hour with auto-renewal
@@ -161,7 +138,7 @@ mux.Handle("/", requireAuth(http.HandlerFunc(s.handleDashboard)))
 // Add stricter check
 requireRepoAccess := auth.CheckRepositoryAccess(sessions, installations, clientCreator)
 
-mux.Handle("/", 
+mux.Handle("/",
   requireAuth(
     requireRepoAccess(
       http.HandlerFunc(s.handleDashboard)
@@ -177,16 +154,16 @@ func requireOrgMembership(org string) func(http.Handler) http.Handler {
   return func(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
       username := sessions.GetString(r.Context(), SessionKeyUsername)
-      
+
       // Check org membership
       client, _ := clientCreator.NewAppClient()
       member, _, err := client.Organizations.IsMember(ctx, org, username)
-      
+
       if !member {
         http.Error(w, "Forbidden", http.StatusForbidden)
         return
       }
-      
+
       next.ServeHTTP(w, r)
     })
   }
@@ -197,9 +174,8 @@ func requireOrgMembership(org string) func(http.Handler) http.Handler {
 
 ### "Session not found" errors
 
-- Check if `DASHBOARD_SESSIONS_SECRET_KEY` is set correctly
-- Verify the secret key hasn't changed (invalidates all sessions)
 - Ensure cookies are enabled in browser
+- Sessions are held in the configured session store; an in-memory store loses sessions on restart.
 
 ### OAuth redirect issues
 
@@ -224,7 +200,7 @@ func requireOrgMembership(org string) func(http.Handler) http.Handler {
    ```bash
    # Use ngrok for local testing
    ngrok http 8080
-   
+
    # Set callback URL in GitHub App:
    # https://your-ngrok-url.ngrok.io/login/callback
    ```
@@ -259,13 +235,13 @@ func requireAPIToken() func(http.Handler) http.Handler {
         http.Error(w, "Unauthorized", http.StatusUnauthorized)
         return
       }
-      
+
       // Validate token
       if !validateToken(token[7:]) {
         http.Error(w, "Invalid token", http.StatusUnauthorized)
         return
       }
-      
+
       next.ServeHTTP(w, r)
     })
   }
@@ -276,10 +252,9 @@ func requireAPIToken() func(http.Handler) http.Handler {
 
 If upgrading from a version without authentication:
 
-1. **Add session configuration** to `config.yml`
-2. **Set secret key** via environment variable
-3. **Update GitHub App** with OAuth settings
-4. **Deploy new version**
-5. **Users must authenticate** on first access
+1. **Add session lifetime configuration** to `config.yml`
+2. **Update GitHub App** with OAuth settings
+3. **Deploy new version**
+4. **Users must authenticate** on first access
 
 All existing data remains accessible after authentication.

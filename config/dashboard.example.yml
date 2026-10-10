@@ -44,10 +44,9 @@ github:
     client_secret: "your-client-secret"
 
 database:
-  # Database connection URL
-  # SQLite: "file:dashboard.db?cache=shared&mode=rwc"
-  # PostgreSQL: "postgres://user:pass@localhost:5432/dashboard?sslmode=disable"
-  url: "file:dashboard.db?cache=shared&mode=rwc"
+  # PostgreSQL connection URL
+  driver: "postgres"
+  url: "postgres://user:pass@localhost:5432/dashboard?sslmode=disable"
   
   # Connection pool settings
   max_open_conns: 25

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ import (
 type Server struct {
 	config        *Config
 	db            *sql.DB
+	httpServer    *http.Server
 	handlers      []githubapp.EventHandler
 	base          *handler.Base
 	wsHub         *websocket.Hub
@@ -84,13 +86,7 @@ func New(config *Config) (*Server, error) {
 	if config.Sessions.Lifetime > 0 {
 		sessionLifetime = config.Sessions.Lifetime
 	}
-	sessions, err := auth.NewSessionManager(ctx, config.Sessions.SecretKey, sessionLifetime)
-	if err != nil {
-		if db != nil {
-			db.Close()
-		}
-		return nil, errors.Wrap(err, "failed to create session manager")
-	}
+	sessions := auth.NewSessionManager(sessionLifetime)
 
 	// Create WebSocket hub
 	wsHub := websocket.NewHub()
@@ -121,6 +117,7 @@ func New(config *Config) (*Server, error) {
 
 	// Load templates
 	templatesPath := filepath.Join(os.Getenv("KO_DATA_PATH"), "templates")
+	// #nosec G703 -- KO_DATA_PATH is deployment-controlled; template filenames are fixed.
 	if _, err := os.Stat(templatesPath); os.IsNotExist(err) {
 		templatesPath = "kodata/templates"
 	}
@@ -238,11 +235,12 @@ func (s *Server) Start() error {
 	if s.config.Options.EnableRealtime && s.wsHub != nil {
 		wsHandler := requireAuth(http.HandlerFunc(s.wsHub.ServeWS))
 		mux.Handle("/ws", wsHandler)
-		logger.Info("WebSocket endpoint enabled at /ws and /ws/ (protected)")
+		logger.Info("WebSocket endpoint enabled at /ws and /ws/", "auth_enabled", !s.config.DemoMode)
 	}
 
 	// Static assets (unprotected, but could be protected if desired)
 	staticDir := filepath.Join(os.Getenv("KO_DATA_PATH"), "static")
+	// #nosec G703 -- KO_DATA_PATH is deployment-controlled; static paths are fixed.
 	if _, err := os.Stat(staticDir); err == nil {
 		mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
 	} else {
@@ -265,32 +263,58 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Server.Address, s.config.Server.Port)
 
 	// Start server with logger and session middleware wrapping everything
-	logger.Info("Starting server with authentication",
+	logger.Info("Starting server",
 		"address", addr,
-		"auth_enabled", true)
+		"auth_enabled", !s.config.DemoMode)
 
-	return http.ListenAndServe(addr, loggerMiddleware(sessionMiddleware(mux)))
-}
-
-// Close gracefully shuts down the server
-func (s *Server) Close() error {
-	if s.db != nil {
-		return s.db.Close()
+	s.httpServer = &http.Server{
+		Addr:              addr,
+		Handler:           loggerMiddleware(sessionMiddleware(mux)),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      45 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
 	}
 	return nil
 }
 
+// Close gracefully shuts down the server
+func (s *Server) Close() error {
+	var closeErr error
+	if s.httpServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		closeErr = s.httpServer.Shutdown(ctx)
+	}
+	if s.db != nil {
+		if err := s.db.Close(); closeErr == nil {
+			closeErr = err
+		}
+	}
+	return closeErr
+}
+
 // handleHealth returns server health status
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	logger := clog.FromContext(r.Context())
 	// Check database connection
-	if err := s.db.Ping(); err != nil {
+	if s.db == nil {
+		http.Error(w, "Database unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.db.PingContext(r.Context()); err != nil {
 		http.Error(w, "Database unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"healthy","database":"connected"}`))
+	if _, err := io.WriteString(w, `{"status":"healthy","database":"connected"}`); err != nil {
+		logger.Warn("Failed to write health response", "error", err)
+	}
 }
 
 // handleDashboard serves the main dashboard UI
@@ -302,6 +326,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	// Try to read from KO_DATA_PATH first (for ko builds), then from local
 	templatePath := filepath.Join(os.Getenv("KO_DATA_PATH"), "templates/dashboard.html")
+	// #nosec G703 -- KO_DATA_PATH is deployment-controlled; the template filename is fixed.
 	content, err := os.ReadFile(templatePath)
 	if err != nil {
 		// Fall back to local file
@@ -313,7 +338,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	w.Write(content)
+	if _, err := w.Write(content); err != nil {
+		clog.FromContext(r.Context()).Warn("Failed to write dashboard response", "error", err)
+	}
 }
 
 // handleRepositories returns repository list
@@ -367,9 +394,7 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 		Limit: 50, // Default limit
 	}
 
-	if repoID := r.URL.Query().Get("repository_id"); repoID != "" {
-		fmt.Sscanf(repoID, "%d", &opts.RepositoryID)
-	}
+	opts.RepositoryID = parseRepositoryID(r)
 
 	if status := r.URL.Query().Get("status"); status != "" {
 		opts.Status = status
@@ -391,9 +416,7 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if limit := r.URL.Query().Get("limit"); limit != "" {
-		fmt.Sscanf(limit, "%d", &opts.Limit)
-	}
+	opts.Limit = parseQueryInt(r, "limit", opts.Limit)
 
 	// Get workflow runs
 	runs, err := GetWorkflowRuns(ctx, s.db, opts)
@@ -430,20 +453,34 @@ func writeJSON(w http.ResponseWriter, data interface{}) error {
 	return encoder.Encode(data)
 }
 
+func parseRepositoryID(r *http.Request) int64 {
+	value := r.URL.Query().Get("repository_id")
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 0 {
+		return 0
+	}
+	return parsed
+}
+
+func parseQueryInt(r *http.Request, key string, fallback int) int {
+	value := r.URL.Query().Get(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
+}
+
 // handleAnalytics returns analytics data
 func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := clog.FromContext(ctx)
 
-	var repoID int64
-	if id := r.URL.Query().Get("repository_id"); id != "" {
-		fmt.Sscanf(id, "%d", &repoID)
-	}
-
-	days := 30
-	if d := r.URL.Query().Get("days"); d != "" {
-		fmt.Sscanf(d, "%d", &days)
-	}
+	repoID := parseRepositoryID(r)
+	days := parseQueryInt(r, "days", 30)
 
 	analytics, err := GetAnalytics(ctx, s.db, repoID, days)
 	if err != nil {
@@ -466,7 +503,9 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 
 	// Fallback to JSON for API requests
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, analytics)
+	if err := writeJSON(w, analytics); err != nil {
+		logger.Error("Failed to write JSON response", "error", err)
+	}
 }
 
 // handleFlakyTests returns flaky test data
@@ -474,20 +513,9 @@ func (s *Server) handleFlakyTests(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := clog.FromContext(ctx)
 
-	var repoID int64
-	if id := r.URL.Query().Get("repository_id"); id != "" {
-		fmt.Sscanf(id, "%d", &repoID)
-	}
-
-	minRuns := 5
-	if m := r.URL.Query().Get("min_runs"); m != "" {
-		fmt.Sscanf(m, "%d", &minRuns)
-	}
-
-	days := 30
-	if d := r.URL.Query().Get("days"); d != "" {
-		fmt.Sscanf(d, "%d", &days)
-	}
+	repoID := parseRepositoryID(r)
+	minRuns := parseQueryInt(r, "min_runs", 5)
+	days := parseQueryInt(r, "days", 30)
 
 	flakyTests, err := GetFlakyTests(ctx, s.db, repoID, minRuns, days)
 	if err != nil {
@@ -510,7 +538,9 @@ func (s *Server) handleFlakyTests(w http.ResponseWriter, r *http.Request) {
 
 	// Fallback to JSON for API requests
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]interface{}{"flaky_tests": flakyTests})
+	if err := writeJSON(w, map[string]interface{}{"flaky_tests": flakyTests}); err != nil {
+		logger.Error("Failed to write JSON response", "error", err)
+	}
 }
 
 // handleTrends returns trend data
@@ -518,15 +548,8 @@ func (s *Server) handleTrends(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := clog.FromContext(ctx)
 
-	var repoID int64
-	if id := r.URL.Query().Get("repository_id"); id != "" {
-		fmt.Sscanf(id, "%d", &repoID)
-	}
-
-	days := 30
-	if d := r.URL.Query().Get("days"); d != "" {
-		fmt.Sscanf(d, "%d", &days)
-	}
+	repoID := parseRepositoryID(r)
+	days := parseQueryInt(r, "days", 30)
 
 	trends, err := GetTrendData(ctx, s.db, repoID, days)
 	if err != nil {
@@ -536,7 +559,9 @@ func (s *Server) handleTrends(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]interface{}{"trends": trends})
+	if err := writeJSON(w, map[string]interface{}{"trends": trends}); err != nil {
+		logger.Error("Failed to write JSON response", "error", err)
+	}
 }
 
 func (s *Server) handleRepositoryDetail(w http.ResponseWriter, r *http.Request) {

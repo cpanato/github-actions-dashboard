@@ -10,70 +10,22 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/chainguard-dev/clog"
 )
 
-func TestGenerateSecretKey(t *testing.T) {
-	key, err := GenerateSecretKey()
-	if err != nil {
-		t.Fatalf("GenerateSecretKey() error = %v", err)
-	}
-
-	if len(key) == 0 {
-		t.Error("GenerateSecretKey() returned empty key")
-	}
-
-	key2, err := GenerateSecretKey()
-	if err != nil {
-		t.Fatalf("GenerateSecretKey() error = %v", err)
-	}
-
-	if key == key2 {
-		t.Error("GenerateSecretKey() returned same key twice")
-	}
-}
-
 func TestNewSessionManager(t *testing.T) {
-	ctx := context.Background()
-	logger := clog.New(slog.Default().Handler())
-	ctx = clog.WithLogger(ctx, logger)
-
-	tests := []struct {
-		name      string
-		secretKey string
-		lifetime  int
-		wantErr   bool
-	}{
-		{
-			name:      "with secret key",
-			secretKey: "test-secret-key-32-bytes-long!",
-			lifetime:  3600,
-			wantErr:   false,
-		},
-		{
-			name:      "without secret key",
-			secretKey: "",
-			lifetime:  3600,
-			wantErr:   false,
-		},
+	sessions := NewSessionManager(3600)
+	if sessions.Lifetime != time.Hour {
+		t.Errorf("SessionManager.Lifetime = %v, want %v", sessions.Lifetime, time.Hour)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sm, err := NewSessionManager(ctx, tt.secretKey, tt.lifetime)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewSessionManager() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if sm == nil {
-				t.Error("NewSessionManager() returned nil")
-			}
-			if sm.Cookie.Name != "dashboard_session" {
-				t.Errorf("Cookie.Name = %v, want dashboard_session", sm.Cookie.Name)
-			}
-		})
+	if sessions.Cookie.Name != "dashboard_session" {
+		t.Errorf("Cookie.Name = %q, want dashboard_session", sessions.Cookie.Name)
+	}
+	if !sessions.Cookie.HttpOnly {
+		t.Error("session cookie must be HttpOnly")
 	}
 }
 
@@ -99,7 +51,7 @@ func TestRequireLogin_UnprotectedPaths(t *testing.T) {
 			rr := httptest.NewRecorder()
 
 			handlerCalled := false
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				handlerCalled = true
 				w.WriteHeader(http.StatusOK)
 			})
@@ -126,7 +78,7 @@ func TestRequireLogin_ProtectedPaths_NoAuth(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	handlerCalled := false
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		handlerCalled = true
 	})
 

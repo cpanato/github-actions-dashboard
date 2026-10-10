@@ -24,5 +24,4 @@ options:
   enable_realtime: true
 
 sessions:
-  secret_key: "local-demo-session-key-only"
   lifetime: 86400
