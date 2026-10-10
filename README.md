@@ -33,3 +33,14 @@ CI runs these checks on pull requests and runs vulnerability checks weekly.
 Release automation uses GoReleaser v2.18.3 and publishes `v*` tags. It builds
 archives and container images, generates an SBOM, and signs the image digest
 with cosign v3.1.3. Merge dependent maintenance PRs in stack order.
+
+### Running locally
+
+Set `GITHUB_TOKEN` in your environment, then run `go run .` and open
+`http://localhost:3000`. Templates default to `kodata`; set `KO_DATA_PATH` to
+use a different data directory. Container builds set this path automatically.
+Missing or invalid templates are reported at startup.
+
+Requests to GitHub have a 30-second deadline. API failures return HTTP 502,
+timeouts return HTTP 504, and rate limits return HTTP 503 with `Retry-After`
+when GitHub provides a reset time. Failed fetches are not cached.
