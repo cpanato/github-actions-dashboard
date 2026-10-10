@@ -22,7 +22,7 @@ It will show the past 12 hours of GitHub workflows that ran.
 
 ### Development
 
-Use the Go version declared in `go.mod` and golangci-lint v2.14.0.
+Use the Go version declared in `go.mod` and golangci-lint v2.14.
 
 - `make test` runs tests with the race detector.
 - `make lint` checks Go code and formatting.
