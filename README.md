@@ -1,148 +1,62 @@
 # GitHub Actions Dashboard
 
-A modern dashboard for monitoring GitHub Actions workflows across multiple repositories using GitHub Apps.
+Monitor workflow health across repositories installed in a GitHub App. The dashboard includes aggregate analytics, flaky check detection, and a workflow-by-commit matrix with filters for workflow, branch, and event.
 
-## Features
+## Screenshots
 
-- **GitHub App Integration**: Receives real-time webhook events from GitHub
-- **Multi-Repository Support**: Track workflows across all repositories where the app is installed
-- **Database Storage**: SQLite for local development, PostgreSQL for production
-- **Cloud Run Ready**: Optimized for deployment on GCP Cloud Run with Cloud SQL
-- **Real-time Updates**: WebSocket support for live dashboard updates (coming soon)
+![Dashboard overview](assets/home.png)
 
-## Quick Start (Local Development)
+![Repository workflow matrix](assets/dashboard.png)
+
+## Local Demo
+
+Requires Go 1.27.2 and Docker Compose.
 
 ```bash
-# 1. Build
-go build -o dashboard .
-
-# 2. Run with SQLite
-./dashboard -config config/local.yml
+docker compose up -d postgres
+go run . -config config/demo.yml
 ```
 
-Server starts on `http://localhost:8080`. SQLite database (`dashboard.db`) is created automatically.
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080). The demo seeds synthetic repositories, workflow runs, and check runs into PostgreSQL. Demo mode disables OAuth only for this profile and refuses non-loopback binds or a configured public URL. Do not use demo mode for a deployed instance.
 
-**Health check**: `curl http://localhost:8080/api/health`
+The demo database is persistent in a Docker volume. Stop the app with `Ctrl+C`; stop PostgreSQL with `docker compose down` (the volume is retained).
 
-## Configuration
+## GitHub App Configuration
 
-Example `config/local.yml`:
-```yaml
-server:
-  address: "0.0.0.0"
-  port: 8080
+For real GitHub data, configure `config/local.dev.yml` or `config/production.yml` and set the GitHub App credentials:
 
-database:
-  driver: "sqlite"  # Uses file:dashboard.db by default
-
-logging:
-  level: "info"
-  text: true  # Pretty console output
-```
-
-### Database Options
-
-**SQLite** (default for local dev):
-```yaml
-database:
-  driver: "sqlite"
-  url: "file:dashboard.db"
-  # Or in-memory: url: ":memory:"
-```
-
-**PostgreSQL**:
-```yaml
-database:
-  driver: "postgres"
-  url: "postgres://user:pass@localhost:5432/dashboard?sslmode=disable"
-```
-
-**Cloud SQL** (auto-configured via env vars):
-```bash
-export DASHBOARD_DATABASE_CLOUD_SQL_INSTANCE=project:region:instance
-export DASHBOARD_DATABASE_NAME=dashboard
-export DASHBOARD_DATABASE_USER=dashboard-user
-export DASHBOARD_DATABASE_PASSWORD=secret
-```
-
-## GitHub App Setup
-
-1. **Create GitHub App**: Settings → Developer settings → GitHub Apps
-   - Webhook URL: `https://your-domain.com/api/github/hook`
-   - Permissions: Actions (Read), Checks (Read), Metadata (Read)
-   - Events: `workflow_run`
-
-2. **Configure**:
 ```bash
 export DASHBOARD_GITHUB_APP_INTEGRATION_ID=123456
 export DASHBOARD_GITHUB_APP_PRIVATE_KEY="$(cat private-key.pem)"
-export DASHBOARD_GITHUB_APP_WEBHOOK_SECRET=your-secret
+export DASHBOARD_GITHUB_APP_WEBHOOK_SECRET=your-webhook-secret
+export DASHBOARD_GITHUB_OAUTH_CLIENT_ID=your-client-id
+export DASHBOARD_GITHUB_OAUTH_CLIENT_SECRET=your-client-secret
 ```
 
-## Deployment (GCP Cloud Run)
+The app receives `workflow_run`, `check_run`, `installation`, and `installation_repositories` webhook events at `/api/github/hook`. User-facing dashboard routes are protected by GitHub OAuth. See [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) for the authentication flow.
 
-```bash
-# Setup Cloud SQL
-./deploy/cloud-run/setup-cloudsql.sh
+Production configuration supports Cloud SQL PostgreSQL through `DASHBOARD_DATABASE_CLOUD_SQL_INSTANCE`, `DASHBOARD_DATABASE_NAME`, `DASHBOARD_DATABASE_USER`, and `DASHBOARD_DATABASE_PASSWORD`.
 
-# Setup GitHub App secrets
-./deploy/cloud-run/setup-secrets.sh
+## Routes
 
-# Deploy
-./deploy/cloud-run/deploy.sh
-```
+- `GET /` - Repository overview and analytics
+- `GET /repository/{owner}/{repo}` - Repository workflow matrix
+- `GET /api/repositories` - Tracked repositories
+- `GET /api/workflows` - Workflow runs
+- `GET /api/analytics` - Run summary
+- `GET /api/flaky-tests` - Intermittently failing checks
+- `GET /api/trends` - Run trends
+- `GET /api/health` - Database health
+- `POST /api/github/hook` - GitHub App webhook receiver
 
-See deployment scripts in `deploy/cloud-run/` for details.
+## Development
 
-## API Endpoints
+- `make test` runs tests with the race detector.
+- `make lint` runs golangci-lint.
+- `make verify` checks modules, vulnerabilities, and `go vet`.
+- `make ko-local` builds a local container image with ko.
 
-- `GET /` - Dashboard UI (basic placeholder)
-- `POST /api/github/hook` - GitHub webhook endpoint
-- `GET /api/health` - Health check
-- `GET /api/repositories` - List repositories
-- `GET /api/workflows` - List workflow runs
-
-## Database Schema
-
-Auto-created on startup:
-
-- **repositories**: GitHub repo metadata
-- **workflow_runs**: Workflow execution data
-- **workflow_jobs**: Individual job results
-
-View schema:
-```bash
-sqlite3 dashboard.db ".schema"
-```
-
-## Project Structure
-
-```
-├── main.go                     # Entry point
-├── server/
-│   ├── config.go              # Configuration
-│   ├── server.go              # HTTP server
-│   ├── db.go                  # Database setup
-│   └── handler/               # Webhook handlers
-├── config/                    # Config examples
-├── deploy/cloud-run/          # GCP deployment
-└── scripts/                   # Helper scripts
-```
-
-## Development Status
-
-✅ **Completed** (Phase 1-2):
-- GitHub App webhook integration
-- Database layer (SQLite + PostgreSQL)
-- Cloud Run deployment infrastructure
-- Workflow run event handling
-
-🚧 **In Progress** (Phase 3-4):
-- Modern UI with HTMX + Tailwind
-- WebSocket real-time updates
-- Additional event handlers
-
-See [REFACTORING_PLAN.md](REFACTORING_PLAN.md) for full roadmap.
+CI runs these checks on pull requests and pushes to `main`. Releases use GoReleaser and include an SBOM and cosign image signature.
 
 ## License
 

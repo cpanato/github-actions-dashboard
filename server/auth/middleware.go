@@ -9,13 +9,12 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/alexedwards/scs/v2"
 	"github.com/chainguard-dev/clog"
-	"github.com/google/go-github/v80/github"
+	"github.com/google/go-github/v92/github"
 	"github.com/palantir/go-githubapp/githubapp"
 	"github.com/palantir/go-githubapp/oauth2"
 	"github.com/pkg/errors"
@@ -36,16 +35,16 @@ func LoginCallback(c githubapp.Config, basePath string, sessions *scs.SessionMan
 			"path", r.URL.Path,
 			"method", r.Method)
 
-		client := github.NewClient(login.Client)
-
-		// Parse GitHub API URL
-		u, err := url.Parse(strings.TrimSuffix(c.V3APIURL, "/") + "/")
+		apiURL := strings.TrimSuffix(c.V3APIURL, "/") + "/"
+		client, err := github.NewClient(
+			github.WithHTTPClient(login.Client),
+			github.WithURLs(&apiURL, nil),
+		)
 		if err != nil {
-			logger.Error("Failed to parse GitHub URL", "error", err)
+			logger.Error("Failed to create GitHub client", "error", err)
 			http.Error(w, "Configuration error", http.StatusInternalServerError)
 			return
 		}
-		client.BaseURL = u
 
 		// Get authenticated user
 		user, _, err := client.Users.Get(ctx, "")

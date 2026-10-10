@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>{{.repository.FullName}} - GitHub Actions Dashboard</title>
+	<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+	<script src="https://cdn.tailwindcss.com"></script>
+	<style>
+		.matrix-scroll { max-height: calc(100vh - 220px); max-width: 100%; overflow: auto; width: max-content; }
+		.matrix { border-collapse: separate; border-spacing: 0; table-layout: fixed; width: max-content; }
+		.matrix th, .matrix td { border-bottom: 1px solid #e5e7eb; border-right: 1px solid #eef0f2; }
+		.matrix .workflow-heading { background: #f8fafc; left: 0; min-width: 180px; position: sticky; text-align: left; width: 180px; z-index: 2; }
+		.matrix thead th { background: #f8fafc; position: sticky; top: 0; z-index: 1; }
+		.matrix thead .workflow-heading { z-index: 3; }
+		.run-heading { height: 72px; min-width: 32px; padding: 4px 2px; vertical-align: bottom; width: 32px; }
+		.run-heading a { display: inline-block; font-size: 10px; writing-mode: vertical-rl; transform: rotate(180deg); }
+		.status-cell { align-items: center; border-radius: 2px; display: inline-flex; height: 18px; justify-content: center; width: 18px; }
+		.status-empty { color: #cbd5e1; font-size: 13px; }
+		@media (max-width: 640px) { .matrix .workflow-heading { min-width: 140px; width: 140px; } }
+	</style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+	<header class="border-b border-slate-200 bg-white">
+		<div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
+			<div>
+				<a href="/" class="text-xs text-blue-700 hover:underline">← Back to Dashboard</a>
+				<h1 class="mt-1 text-lg font-semibold">{{.repository.FullName}}</h1>
+				<span class="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{{.repository.DefaultBranch}}</span>
+			</div>
+			<a href="https://github.com/{{.repository.FullName}}" target="_blank" rel="noopener noreferrer" class="rounded border border-slate-300 px-3 py-2 text-xs hover:bg-slate-50">View on GitHub</a>
+		</div>
+	</header>
+
+	<main class="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
+		<div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+			<h2 class="text-lg font-semibold">Recent Workflow Runs</h2>
+			<form method="get" class="flex flex-wrap items-center gap-3 text-xs">
+				<label class="flex items-center gap-1.5">View
+					<select name="view" onchange="this.form.requestSubmit()" class="max-w-32 rounded border border-slate-300 bg-white px-2 py-1.5">
+						<option value="grid" {{if ne .currentView "cards"}}selected{{end}}>Grid View</option>
+						<option value="cards" {{if eq .currentView "cards"}}selected{{end}}>Card View</option>
+					</select>
+				</label>
+				<label class="flex items-center gap-1.5">Workflow
+					<select name="workflow" onchange="this.form.requestSubmit()" class="max-w-48 rounded border border-slate-300 bg-white px-2 py-1.5">
+						<option value="">All workflows</option>
+						{{range .workflows}}<option value="{{.}}" {{if eq $.currentWorkflow .}}selected{{end}}>{{.}}</option>{{end}}
+					</select>
+				</label>
+				<label class="flex items-center gap-1.5">Branch
+					<select name="branch" onchange="this.form.requestSubmit()" class="max-w-40 rounded border border-slate-300 bg-white px-2 py-1.5">
+						<option value="">All branches</option>
+						{{range .branches}}<option value="{{.}}" {{if eq $.currentBranch .}}selected{{end}}>{{.}}</option>{{end}}
+					</select>
+				</label>
+				<label class="flex items-center gap-1.5">Event
+					<select name="event" onchange="this.form.requestSubmit()" class="max-w-40 rounded border border-slate-300 bg-white px-2 py-1.5">
+						<option value="">All events</option>
+						{{range .events}}<option value="{{.}}" {{if eq $.currentEvent .}}selected{{end}}>{{.}}</option>{{end}}
+					</select>
+				</label>
+				<label class="flex items-center gap-1.5">Show
+					<select name="limit" onchange="this.form.requestSubmit()" class="rounded border border-slate-300 bg-white px-2 py-1.5">
+						{{range $count := .limitOptions}}<option value="{{$count}}" {{if eq $.currentLimit $count}}selected{{end}}>{{$count}} runs</option>{{end}}
+					</select>
+				</label>
+			</form>
+		</div>
+
+		{{if eq .currentView "cards"}}
+			{{if .workflowRows}}
+				<div class="space-y-5">
+					{{range .workflowRows}}
+					<section>
+						<h3 class="mb-2 truncate text-sm font-medium" title="{{.Name}}">{{.Name}}</h3>
+						<div class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+							{{range .Cells}}{{if .}}
+							<a href="{{.HTMLURL}}" target="_blank" rel="noopener noreferrer" class="rounded border p-3 text-xs hover:shadow-sm {{if eq .Conclusion "success"}}border-green-500 bg-green-50{{else if eq .Conclusion "failure"}}border-red-500 bg-red-50{{else if eq .Status "in_progress"}}border-blue-500 bg-blue-50{{else}}border-slate-300 bg-white{{end}}">
+								<div class="flex justify-between"><strong>#{{.RunNumber}}</strong><span>{{if eq .Conclusion "success"}}✓{{else if eq .Conclusion "failure"}}×{{else if eq .Status "in_progress"}}…{{else}}○{{end}}</span></div>
+								<div class="mt-2 truncate" title="{{.HeadBranch}}">{{.HeadBranch}}</div>
+								<div class="mt-1 text-slate-500">{{.CreatedAt.Format "Jan 2, 15:04"}}</div>
+							</a>
+							{{end}}{{end}}
+						</div>
+					</section>
+					{{end}}
+				</div>
+			{{else}}
+				<p class="rounded border border-slate-200 bg-white p-6 text-sm text-slate-500">No workflow runs found for this repository.</p>
+			{{end}}
+		{{else}}
+			<div class="matrix-scroll rounded border border-slate-200 bg-white">
+				<table class="matrix text-xs" aria-label="Workflow runs by workflow and run">
+					<thead>
+						<tr>
+							<th class="workflow-heading px-3 py-2 font-medium">Workflow</th>
+							{{range .columns}}
+							<th class="run-heading font-normal" title="{{.HeadSHA}} · {{.CreatedAt.Format "Jan 2, 2006 15:04"}} · {{.HeadBranch}}">
+								<a href="{{.HTMLURL}}" target="_blank" rel="noopener noreferrer" aria-label="Commit {{.HeadSHA}}">{{printf "%.7s" .HeadSHA}}</a>
+							</th>
+							{{end}}
+						</tr>
+					</thead>
+					<tbody>
+						{{range .workflowRows}}
+						<tr class="h-7 hover:bg-slate-50">
+							<th scope="row" class="workflow-heading truncate px-3 py-1 font-normal" title="{{.Name}}">{{.Name}}</th>
+							{{range .Cells}}
+							<td class="px-1 text-center">
+								{{if .}}
+								<a href="{{.HTMLURL}}" target="_blank" rel="noopener noreferrer" class="status-cell {{if eq .Conclusion "success"}}bg-green-500 text-white{{else if eq .Conclusion "failure"}}bg-red-500 text-white{{else if eq .Conclusion "cancelled"}}bg-slate-300 text-slate-700{{else if eq .Status "in_progress"}}bg-blue-500 text-white{{else if eq .Status "queued"}}bg-amber-300 text-slate-800{{else}}bg-slate-200 text-slate-700{{end}}" title="#{{.RunNumber}} · {{.HeadBranch}} · {{if .Conclusion}}{{.Conclusion}}{{else}}{{.Status}}{{end}}" aria-label="Run #{{.RunNumber}}: {{if .Conclusion}}{{.Conclusion}}{{else}}{{.Status}}{{end}}">
+									{{if eq .Conclusion "success"}}✓{{else if eq .Conclusion "failure"}}×{{else if eq .Status "in_progress"}}…{{else if eq .Status "queued"}}◷{{else}}•{{end}}
+								</a>
+								{{else}}<span class="status-empty" aria-hidden="true">○</span>{{end}}
+							</td>
+							{{end}}
+						</tr>
+						{{end}}
+					</tbody>
+				</table>
+				{{if not .workflowRows}}<p class="p-6 text-sm text-slate-500">No workflow runs found for this repository.</p>{{end}}
+			</div>
+		{{end}}
+		<div class="mt-3 flex flex-wrap gap-4 text-xs text-slate-600" aria-label="Run status legend">
+			<span><b class="text-green-600">✓</b> Success</span>
+			<span><b class="text-red-600">×</b> Failure</span>
+			<span><b class="text-blue-600">…</b> Running</span>
+			<span><b class="text-amber-600">◷</b> Queued</span>
+			<span><b class="text-slate-400">○</b> No run</span>
+		</div>
+	</main>
+</body>
+</html>

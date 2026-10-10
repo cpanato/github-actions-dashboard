@@ -6,7 +6,9 @@ package server
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/palantir/go-baseapp/baseapp"
@@ -26,6 +28,7 @@ type Config struct {
 	Cache    CacheConfig        `yaml:"cache"`
 	Options  DashboardOptions   `yaml:"options"`
 	Sessions SessionsConfig     `yaml:"sessions"`
+	DemoMode bool               `yaml:"demo_mode"`
 }
 
 type LoggingConfig struct {
@@ -182,6 +185,22 @@ func ParseConfig(bytes []byte) (*Config, error) {
 	}
 
 	return &c, nil
+}
+
+func validateDemoMode(config *Config) error {
+	if !config.DemoMode {
+		return nil
+	}
+
+	address := strings.Trim(config.Server.Address, "[]")
+	ip := net.ParseIP(address)
+	if !strings.EqualFold(address, "localhost") && (ip == nil || !ip.IsLoopback() || ip.To4() == nil) {
+		return fmt.Errorf("demo mode requires a loopback server address, got %q", config.Server.Address)
+	}
+	if config.Server.PublicURL != "" {
+		return fmt.Errorf("demo mode cannot be used with a public URL")
+	}
+	return nil
 }
 
 // buildCloudSQLConnectionString creates a PostgreSQL connection string for Cloud SQL

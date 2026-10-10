@@ -164,6 +164,12 @@ func GetWorkflowRuns(ctx context.Context, db *sql.DB, opts WorkflowRunOptions) (
 		paramIndex++
 	}
 
+	if opts.Event != "" {
+		query += fmt.Sprintf(` AND wr.event = $%d`, paramIndex)
+		args = append(args, opts.Event)
+		paramIndex++
+	}
+
 	if !opts.Since.IsZero() {
 		query += fmt.Sprintf(` AND wr.created_at >= $%d`, paramIndex)
 		args = append(args, opts.Since)
@@ -209,8 +215,59 @@ type WorkflowRunOptions struct {
 	Conclusion   string
 	HeadBranch   string
 	WorkflowName string
+	Event        string
 	Since        time.Time
 	Limit        int
+}
+
+type WorkflowGridRow struct {
+	Name  string
+	Cells []*WorkflowRun
+}
+
+func buildWorkflowGrid(runs []WorkflowRun, limit int) ([]WorkflowRun, []WorkflowGridRow, []string) {
+	columns := make([]WorkflowRun, 0)
+	columnIndexByCommit := make(map[string]int)
+	workflowOrder := make([]string, 0)
+	workflowSeen := make(map[string]bool)
+	workflowCells := make(map[string]map[int]*WorkflowRun)
+
+	for _, run := range runs {
+		commit := run.HeadSHA
+		if commit == "" {
+			commit = fmt.Sprintf("run:%d", run.ID)
+		}
+
+		columnIndex, exists := columnIndexByCommit[commit]
+		if !exists {
+			if limit > 0 && len(columns) >= limit {
+				continue
+			}
+			columnIndex = len(columns)
+			columnIndexByCommit[commit] = columnIndex
+			columns = append(columns, run)
+		}
+
+		if !workflowSeen[run.WorkflowName] {
+			workflowSeen[run.WorkflowName] = true
+			workflowOrder = append(workflowOrder, run.WorkflowName)
+			workflowCells[run.WorkflowName] = make(map[int]*WorkflowRun)
+		}
+		if _, exists := workflowCells[run.WorkflowName][columnIndex]; !exists {
+			runCopy := run
+			workflowCells[run.WorkflowName][columnIndex] = &runCopy
+		}
+	}
+
+	workflowRows := make([]WorkflowGridRow, 0, len(workflowOrder))
+	for _, workflowName := range workflowOrder {
+		row := WorkflowGridRow{Name: workflowName, Cells: make([]*WorkflowRun, len(columns))}
+		for columnIndex, run := range workflowCells[workflowName] {
+			row.Cells[columnIndex] = run
+		}
+		workflowRows = append(workflowRows, row)
+	}
+	return columns, workflowRows, workflowOrder
 }
 
 func itoa(i int) string {
