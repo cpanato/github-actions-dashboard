@@ -7,7 +7,6 @@ package server
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"time"
 )
 
@@ -106,25 +105,19 @@ func GetFlakyTests(ctx context.Context, db *sql.DB, repositoryID int64, minRuns 
 		FROM check_runs cr
 		JOIN repositories r ON cr.repository_id = r.id
 		WHERE cr.completed_at >= $1
+		  AND ($2::BIGINT = 0 OR cr.repository_id = $2)
 	`
 
-	args := []interface{}{since}
-
-	if repositoryID > 0 {
-		query += ` AND cr.repository_id = $2`
-		args = append(args, repositoryID)
-	}
+	args := []interface{}{since, repositoryID, minRuns}
 
 	query += `
 		GROUP BY cr.name, r.full_name
-		HAVING COUNT(*) >= $` + fmt.Sprintf("%d", len(args)+1) + `
+		HAVING COUNT(*) >= $3
 			AND SUM(CASE WHEN cr.conclusion = 'failure' THEN 1 ELSE 0 END) > 0
 			AND SUM(CASE WHEN cr.conclusion = 'success' THEN 1 ELSE 0 END) > 0
 		ORDER BY (CAST(SUM(CASE WHEN cr.conclusion = 'failure' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*)) DESC
 		LIMIT 20
 	`
-	args = append(args, minRuns)
-
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err

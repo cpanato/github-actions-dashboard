@@ -5,9 +5,6 @@
 package auth
 
 import (
-	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"net/http"
 	"strings"
 	"time"
@@ -17,7 +14,6 @@ import (
 	"github.com/google/go-github/v92/github"
 	"github.com/palantir/go-githubapp/githubapp"
 	"github.com/palantir/go-githubapp/oauth2"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -126,29 +122,8 @@ func RequireLogin(sessions *scs.SessionManager, basePath string) func(http.Handl
 	}
 }
 
-// GenerateSecretKey generates a random secret key for session encryption
-func GenerateSecretKey() (string, error) {
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return "", errors.Wrap(err, "failed to generate random key")
-	}
-	return base64.StdEncoding.EncodeToString(key), nil
-}
-
 // NewSessionManager creates a new session manager with the given configuration
-func NewSessionManager(ctx context.Context, secretKey string, lifetime int) (*scs.SessionManager, error) {
-	logger := clog.FromContext(ctx)
-
-	// Generate secret key if not provided
-	if secretKey == "" {
-		var err error
-		secretKey, err = GenerateSecretKey()
-		if err != nil {
-			return nil, err
-		}
-		logger.Warn("No session secret key provided, generated a random key (sessions will be invalidated on restart)")
-	}
-
+func NewSessionManager(lifetime int) *scs.SessionManager {
 	sessions := scs.New()
 	sessions.Cookie.Name = "dashboard_session"
 	sessions.Cookie.HttpOnly = true
@@ -160,5 +135,5 @@ func NewSessionManager(ctx context.Context, secretKey string, lifetime int) (*sc
 		sessions.Lifetime = time.Duration(lifetime) * time.Second
 	}
 
-	return sessions, nil
+	return sessions
 }

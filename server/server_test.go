@@ -30,7 +30,6 @@ github:
     client_secret: "test-secret"
 
 sessions:
-  secret_key: "test-session-key"
   lifetime: 86400
 
 options:

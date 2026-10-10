@@ -17,14 +17,14 @@ import (
 func TestInstallationHandler_Handles(t *testing.T) {
 	handler := &InstallationHandler{}
 	expected := []string{"installation", "installation_repositories"}
-	
+
 	got := handler.Handles()
-	
+
 	if len(got) != len(expected) {
 		t.Errorf("Handles() = %v, want %v", got, expected)
 		return
 	}
-	
+
 	for i, event := range expected {
 		if got[i] != event {
 			t.Errorf("Handles()[%d] = %v, want %v", i, got[i], event)
@@ -74,18 +74,18 @@ func TestInstallationHandler_Handle_IgnoredActions(t *testing.T) {
 	handler := &InstallationHandler{}
 
 	event := github.InstallationEvent{
-		Action: github.String("suspend"),
+		Action: new("suspend"),
 		Installation: &github.Installation{
-			ID: github.Int64(12345),
+			ID: new(int64(12345)),
 			Account: &github.User{
-				Login: github.String("test-org"),
+				Login: new("test-org"),
 			},
 		},
 	}
-	
+
 	payload, _ := json.Marshal(event)
 	err := handler.Handle(ctx, "installation", "delivery-123", payload)
-	
+
 	if err != nil {
 		t.Errorf("Handle() error = %v", err)
 	}

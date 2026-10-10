@@ -24,7 +24,7 @@ func (h *InstallationHandler) Handles() []string {
 }
 
 // Handle processes installation webhook events
-func (h *InstallationHandler) Handle(ctx context.Context, eventType, deliveryID string, payload []byte) error {
+func (h *InstallationHandler) Handle(ctx context.Context, eventType, _ string, payload []byte) error {
 	logger := clog.FromContext(ctx)
 
 	// Handle installation_repositories events separately
@@ -94,10 +94,12 @@ func (h *InstallationHandler) handleInstallationCreated(ctx context.Context, eve
 	}
 
 	if h.WSHub != nil {
-		h.WSHub.Broadcast("installation_update", map[string]interface{}{
+		if err := h.WSHub.Broadcast("installation_update", map[string]interface{}{
 			"action": "created",
 			"count":  len(event.Repositories),
-		})
+		}); err != nil {
+			logger.Warn("Failed to broadcast installation update", "error", err)
+		}
 	}
 
 	return nil
@@ -112,9 +114,11 @@ func (h *InstallationHandler) handleInstallationDeleted(ctx context.Context, eve
 		"installation_id", event.Installation.GetID())
 
 	if h.WSHub != nil {
-		h.WSHub.Broadcast("installation_update", map[string]interface{}{
+		if err := h.WSHub.Broadcast("installation_update", map[string]interface{}{
 			"action": "deleted",
-		})
+		}); err != nil {
+			logger.Warn("Failed to broadcast installation update", "error", err)
+		}
 	}
 
 	return nil
@@ -137,9 +141,11 @@ func (h *InstallationHandler) handleRepositoriesAdded(ctx context.Context, event
 	}
 
 	if h.WSHub != nil {
-		h.WSHub.Broadcast("repositories_added", map[string]interface{}{
+		if err := h.WSHub.Broadcast("repositories_added", map[string]interface{}{
 			"count": len(event.RepositoriesAdded),
-		})
+		}); err != nil {
+			logger.Warn("Failed to broadcast repositories added", "error", err)
+		}
 	}
 
 	return nil
@@ -153,9 +159,11 @@ func (h *InstallationHandler) handleRepositoriesRemoved(ctx context.Context, eve
 		"count", len(event.RepositoriesRemoved))
 
 	if h.WSHub != nil {
-		h.WSHub.Broadcast("repositories_removed", map[string]interface{}{
+		if err := h.WSHub.Broadcast("repositories_removed", map[string]interface{}{
 			"count": len(event.RepositoriesRemoved),
-		})
+		}); err != nil {
+			logger.Warn("Failed to broadcast repositories removed", "error", err)
+		}
 	}
 
 	return nil

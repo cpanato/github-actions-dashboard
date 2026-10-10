@@ -9,7 +9,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -24,7 +26,11 @@ func seedDemoData(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			slog.Warn("Failed to roll back demo seed transaction", "error", err)
+		}
+	}()
 
 	repositories := []struct {
 		id                  int64

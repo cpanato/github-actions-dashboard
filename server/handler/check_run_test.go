@@ -17,14 +17,14 @@ import (
 func TestCheckRunHandler_Handles(t *testing.T) {
 	handler := &CheckRunHandler{}
 	expected := []string{"check_run"}
-	
+
 	got := handler.Handles()
-	
+
 	if len(got) != len(expected) {
 		t.Errorf("Handles() = %v, want %v", got, expected)
 		return
 	}
-	
+
 	if got[0] != expected[0] {
 		t.Errorf("Handles()[0] = %v, want %v", got[0], expected[0])
 	}
@@ -38,21 +38,21 @@ func TestCheckRunHandler_Handle_NonCompleted(t *testing.T) {
 	handler := &CheckRunHandler{}
 
 	actions := []string{"created", "requested_action"}
-	
+
 	for _, action := range actions {
 		t.Run(action, func(t *testing.T) {
 			event := github.CheckRunEvent{
-				Action: github.String(action),
+				Action: new(action),
 				CheckRun: &github.CheckRun{
-					ID:     github.Int64(123),
-					Name:   github.String("test"),
-					Status: github.String(action),
+					ID:     new(int64(123)),
+					Name:   new("test"),
+					Status: new(action),
 				},
 			}
-			
+
 			payload, _ := json.Marshal(event)
 			err := handler.Handle(ctx, "check_run", "delivery-123", payload)
-			
+
 			if err != nil {
 				t.Errorf("Handle() error = %v", err)
 			}
@@ -69,7 +69,7 @@ func TestCheckRunHandler_Handle_InvalidPayload(t *testing.T) {
 
 	invalidPayload := []byte(`{"invalid": "json"`)
 	err := handler.Handle(ctx, "check_run", "delivery-123", invalidPayload)
-	
+
 	if err == nil {
 		t.Error("Handle() should return error for invalid payload")
 	}
