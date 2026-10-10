@@ -3,7 +3,7 @@ version: 2
 before:
   hooks:
     - go mod tidy
-    - /bin/bash -c 'if [ -n "$(git --no-pager diff --exit-code go.mod go.sum)" ]; then exit 1; fi'
+    - git diff --exit-code -- go.mod go.sum
 
 builds:
   - id: binary
@@ -29,6 +29,8 @@ kos:
   - id: ko-image
     build: binary
     main: .
+    repositories:
+      - ghcr.io/cpanato/github-actions-dashboard
     base_image: cgr.dev/chainguard/static:latest
     platforms:
       - all
@@ -55,7 +57,7 @@ checksum:
   name_template: 'checksums.txt'
 
 snapshot:
-  name_template: "{{ .Tag }}-next"
+  version_template: "{{ .Tag }}-next"
 
 changelog:
   sort: asc

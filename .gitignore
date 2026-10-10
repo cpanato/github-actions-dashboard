@@ -1,2 +1,10 @@
 github-actions-dashboard
 dist/*
+
+# Local credentials and generated files
+secrets.txt
+*.private-key.pem
+.DS_Store
+*.tfstate
+*.tfstate.*
+**/.terraform/
