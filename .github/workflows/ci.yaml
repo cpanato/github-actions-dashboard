@@ -5,12 +5,8 @@ on:
     branches:
       - 'main'
   pull_request:
-  schedule:
-    - cron: '17 6 * * 1'
-  workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,6 +14,8 @@ concurrency:
 
 jobs:
   tests:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -40,6 +38,8 @@ jobs:
         run: go vet ./...
 
   build:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -52,8 +52,6 @@ jobs:
           go-version: '1.27'
           check-latest: true
       - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
-        with:
-          version: v0.19.1
         env:
           KO_DOCKER_REPO: ko.local
 
@@ -63,6 +61,8 @@ jobs:
         run: make ko-local
 
   vulnerabilities:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -74,4 +74,4 @@ jobs:
           go-version: '1.27'
           check-latest: true
       - name: Check reachable vulnerabilities
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
