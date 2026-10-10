@@ -3,7 +3,14 @@ name: release
 on:
   push:
     tags:
-      - '*'
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -14,29 +21,40 @@ jobs:
       contents: write
 
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
 
-      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27'
           check-latest: true
 
-      # This installs the current latest release.
-      - uses: ko-build/setup-ko@d006021bd0c28d1ce33a07e7943d48b079944c8d # v0.9
+      - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
+        with:
+          version: v0.19.1
 
       - uses: imjasonh/setup-crane@6da1ae018866400525525ce74ff892880c099987 # v0.5
+        with:
+          version: v0.22.1
 
-      - uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
 
-      - name: Set tag output
-        id: tag
-        run: echo "tag_name=${GITHUB_REF#refs/*/}" >> "$GITHUB_OUTPUT"
+      - name: Validate release
+        run: |
+          go test -race -count=1 ./...
+          go vet ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
-      - uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         id: run-goreleaser
         with:
-          version: latest
+          version: v2.18.3
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -53,7 +71,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GIT_HASH: ${{ github.sha }}
-          GIT_TAG: ${{ steps.tag.outputs.tag_name }}
+          GIT_TAG: ${{ github.ref_name }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
           REGISTRY: "ghcr.io/${{ github.repository }}"
