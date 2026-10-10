@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"time"
 
-	"github.com/google/go-github/v53/github"
+	"github.com/google/go-github/v92/github"
 	"github.com/patrickmn/go-cache"
-	"golang.org/x/oauth2"
 )
 
 func getJobs(c *cache.Cache, owner, repo string) Dashboard {
@@ -21,13 +21,14 @@ func getJobs(c *cache.Cache, owner, repo string) Dashboard {
 
 	log.Println("cache not found")
 
-	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")},
+	client, err := github.NewClient(
+		github.WithAuthToken(os.Getenv("GITHUB_TOKEN")),
+		github.WithTimeout(30*time.Second),
+		github.WithEnvProxy(),
 	)
-	tc := oauth2.NewClient(ctx, ts)
-
-	client := github.NewClient(tc)
+	if err != nil {
+		log.Fatalf("create GitHub client: %v", err)
+	}
 
 	windowStart := time.Now().Add(time.Duration(-12) * time.Hour).UTC().Format(time.RFC3339)
 	opt := &github.ListWorkflowRunsOptions{
@@ -39,11 +40,11 @@ func getJobs(c *cache.Cache, owner, repo string) Dashboard {
 	for {
 		resp, rr, err := client.Actions.ListRepositoryWorkflowRuns(context.Background(), owner, repo, opt)
 		if rlErr, ok := err.(*github.RateLimitError); ok { //nolint: errorlint
-			log.Printf("ListRepositoryWorkflowRuns ratelimited. Pausing until %s", rlErr.Rate.Reset.Time.String())
+			slog.Warn("GitHub API rate limited", "reset", rlErr.Rate.Reset.Time)
 			time.Sleep(time.Until(rlErr.Rate.Reset.Time))
 			continue
 		} else if err != nil {
-			log.Printf("ListRepositoryWorkflowRuns error for repo %s/%s: %s", owner, repo, err.Error())
+			slog.Error("list workflow runs", "owner", owner, "repo", repo, "error", err)
 			os.Exit(1)
 		}
 
@@ -70,16 +71,14 @@ func getJobs(c *cache.Cache, owner, repo string) Dashboard {
 			owner = run.GetRepository().GetOwner().GetLogin()
 			repo = run.GetRepository().GetName()
 
-			opts := &github.PullRequestListOptions{
-				State: "all",
-			}
+			opts := &github.ListOptions{PerPage: 100}
 			pull, _, err := client.PullRequests.ListPullRequestsWithCommit(context.Background(), owner, repo, run.GetHeadSHA(), opts)
 			if rlErr, ok := err.(*github.RateLimitError); ok { //nolint: errorlint
-				log.Printf("ListRepositoryWorkflowRuns ratelimited. Pausing until %s", rlErr.Rate.Reset.Time.String())
+				slog.Warn("GitHub API rate limited", "reset", rlErr.Rate.Reset.Time)
 				time.Sleep(time.Until(rlErr.Rate.Reset.Time))
 				continue
 			} else if err != nil {
-				log.Printf("ListPullRequestsWithCommit error for repo %s/%s: %s", owner, repo, err.Error())
+				slog.Error("list pull requests", "owner", owner, "repo", repo, "error", err)
 				os.Exit(1)
 			}
 
