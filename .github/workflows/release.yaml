@@ -5,8 +5,7 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: release-${{ github.ref }}
@@ -34,8 +33,6 @@ jobs:
           check-latest: true
 
       - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
-        with:
-          version: v0.19.1
 
       - uses: imjasonh/setup-crane@6da1ae018866400525525ce74ff892880c099987 # v0.5
         with:
@@ -49,7 +46,7 @@ jobs:
         run: |
           go test -race -count=1 ./...
           go vet ./...
-          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+          go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         id: run-goreleaser
