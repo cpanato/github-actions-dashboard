@@ -32,9 +32,10 @@ Use the Go version declared in `go.mod` and golangci-lint v2.14.
 CI runs these checks on pull requests and pushes to main.
 The vulnerability check uses the latest govulncheck release, and setup-ko
 installs the latest ko release.
-Release automation uses GoReleaser v2.18.3 and publishes `v*` tags. It builds
-archives and container images, generates an SBOM, and signs the image digest
-with cosign v3.1.3. Merge dependent maintenance PRs in stack order.
+Release automation uses the latest GoReleaser release and publishes `v*` tags.
+It builds archives and container images, generates an SBOM, and signs the image
+digest with cosign. Crane and cosign use their installer defaults. Merge
+dependent maintenance PRs in stack order.
 
 ### Running locally
 
