@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 
 	"github.com/chainguard-dev/clog"
-	"github.com/google/go-github/v80/github"
+	"github.com/google/go-github/v92/github"
 	"github.com/pkg/errors"
 )
 

@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/chainguard-dev/clog"
-	"github.com/google/go-github/v80/github"
+	"github.com/google/go-github/v92/github"
 )
 
 func TestWorkflowRunHandler_Handles(t *testing.T) {

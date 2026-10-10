@@ -1,11 +1,11 @@
 module github.com/cpanato/github-actions-dashboard
 
-go 1.25
+go 1.27.2
 
 require (
 	github.com/alexedwards/scs/v2 v2.9.0
 	github.com/chainguard-dev/clog v1.8.0
-	github.com/google/go-github/v80 v80.0.0
+	github.com/google/go-github/v92 v92.0.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/lib/pq v1.10.9
 	github.com/palantir/go-baseapp v0.5.2
@@ -20,7 +20,7 @@ require (
 	github.com/bradleyfalzon/ghinstallation/v2 v2.9.0 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.0 // indirect
 	github.com/google/go-github/v57 v57.0.0 // indirect
-	github.com/google/go-querystring v1.1.0 // indirect
+	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/gregjones/httpcache v0.0.0-20190611155906-901d90724c79 // indirect
 	github.com/hashicorp/golang-lru v0.6.0 // indirect
 	github.com/kr/text v0.2.0 // indirect

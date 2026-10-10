@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -43,13 +44,26 @@ type Server struct {
 func New(config *Config) (*Server, error) {
 	ctx := context.Background()
 	logger := clog.FromContext(ctx)
+	if err := validateDemoMode(config); err != nil {
+		return nil, err
+	}
 
 	// Initialize database (allow failure for initial startup)
 	db, err := InitDatabase(&config.Database)
 	if err != nil {
+		if config.DemoMode {
+			return nil, errors.Wrap(err, "demo mode requires a working database")
+		}
 		logger.Warn("Failed to initialize database, server will start without database", "error", err)
 		// Continue without database - it will be retried later
 		db = nil
+	}
+	if config.DemoMode {
+		if err := seedDemoData(ctx, db); err != nil {
+			db.Close()
+			return nil, errors.Wrap(err, "failed to seed demo data")
+		}
+		logger.Info("Seeded demo repositories and workflow runs")
 	}
 
 	// Create GitHub App client creator
@@ -181,27 +195,29 @@ func (s *Server) Start() error {
 	// This route is unprotected but needs session access to store auth data
 	basePath := ""
 
-	// Create OAuth config with explicit redirect URL if public_url is set
-	oauthConfig := oauth2.GetConfig(s.config.Github, nil)
-	if s.config.Server.PublicURL != "" {
-		// Override redirect URL to use public URL
-		oauthConfig.RedirectURL = s.config.Server.PublicURL + "/login/callback"
-		logger.Info("Using explicit OAuth redirect URL from config",
-			"public_url", s.config.Server.PublicURL,
-			"redirect_url", oauthConfig.RedirectURL)
+	if s.config.DemoMode {
+		logger.Warn("Demo mode enabled: OAuth disabled; dashboard access is limited to loopback")
+	} else {
+		// Create OAuth config with explicit redirect URL if public_url is set
+		oauthConfig := oauth2.GetConfig(s.config.Github, nil)
+		if s.config.Server.PublicURL != "" {
+			// Override redirect URL to use public URL
+			oauthConfig.RedirectURL = s.config.Server.PublicURL + "/login/callback"
+			logger.Info("Using explicit OAuth redirect URL from config",
+				"public_url", s.config.Server.PublicURL,
+				"redirect_url", oauthConfig.RedirectURL)
+		}
+
+		oauthHandler := oauth2.NewHandler(
+			oauthConfig,
+			oauth2.OnLogin(auth.LoginCallback(s.config.Github, basePath, s.sessions)),
+		)
+		mux.Handle("/login/callback", loggerMiddleware(sessionMiddleware(oauthHandler)))
+		logger.Info("OAuth callback route registered (unprotected)", "path", "/login/callback")
+
+		mux.Handle("/api/github/auth", loggerMiddleware(sessionMiddleware(oauthHandler)))
+		logger.Info("OAuth initiation route registered (unprotected)", "path", "/api/github/auth")
 	}
-
-	oauthHandler := oauth2.NewHandler(
-		oauthConfig,
-		oauth2.OnLogin(auth.LoginCallback(s.config.Github, basePath, s.sessions)),
-	)
-	// Register at /login/callback to match GitHub App callback URL configuration
-	mux.Handle("/login/callback", loggerMiddleware(sessionMiddleware(oauthHandler)))
-	logger.Info("OAuth callback route registered (unprotected)", "path", "/login/callback")
-
-	// Also register the OAuth initiation route
-	mux.Handle("/api/github/auth", loggerMiddleware(sessionMiddleware(oauthHandler)))
-	logger.Info("OAuth initiation route registered (unprotected)", "path", "/api/github/auth")
 
 	// GitHub webhook endpoint (unprotected, no sessions needed)
 	webhookHandler := githubapp.NewEventDispatcher(s.handlers, s.config.Github.App.WebhookSecret, githubapp.WithScheduler(
@@ -214,6 +230,9 @@ func (s *Server) Start() error {
 
 	// Protected routes - require authentication
 	requireAuth := auth.RequireLogin(s.sessions, basePath)
+	if s.config.DemoMode {
+		requireAuth = func(next http.Handler) http.Handler { return next }
+	}
 
 	// WebSocket endpoint (protected)
 	if s.config.Options.EnableRealtime && s.wsHub != nil {
@@ -564,12 +583,20 @@ func (s *Server) handleRepositoryDetail(w http.ResponseWriter, r *http.Request) 
 			limit = parsedLimit
 		}
 	}
+	if limit > 500 {
+		limit = 500
+	}
 
 	// Parse branch filter from query parameter
 	branch := r.URL.Query().Get("branch")
 
 	// Parse workflow filter from query parameter
 	workflow := r.URL.Query().Get("workflow")
+	event := r.URL.Query().Get("event")
+	view := r.URL.Query().Get("view")
+	if view != "cards" {
+		view = "grid"
+	}
 
 	// Get all workflow runs for this repository (up to a reasonable max)
 	// We need to get all runs first, then limit per workflow to ensure all workflows are shown
@@ -588,12 +615,16 @@ func (s *Server) handleRepositoryDetail(w http.ResponseWriter, r *http.Request) 
 	// Build list of unique branches for the filter dropdown
 	branchesMap := make(map[string]bool)
 	workflowsMap := make(map[string]bool)
+	eventsMap := make(map[string]bool)
 	for _, run := range allRuns {
 		if run.HeadBranch != "" {
 			branchesMap[run.HeadBranch] = true
 		}
 		if run.WorkflowName != "" {
 			workflowsMap[run.WorkflowName] = true
+		}
+		if run.Event != "" {
+			eventsMap[run.Event] = true
 		}
 	}
 	branches := make([]string, 0, len(branchesMap))
@@ -604,38 +635,41 @@ func (s *Server) handleRepositoryDetail(w http.ResponseWriter, r *http.Request) 
 	for w := range workflowsMap {
 		workflows = append(workflows, w)
 	}
-
-	// Group runs by workflow name, limiting each workflow to the specified limit
-	groupedRuns := make(map[string][]WorkflowRun)
-	workflowOrder := []string{} // Preserve order of first appearance
-	for _, run := range allRuns {
-		if _, exists := groupedRuns[run.WorkflowName]; !exists {
-			workflowOrder = append(workflowOrder, run.WorkflowName)
+	events := make([]string, 0, len(eventsMap))
+	for eventName := range eventsMap {
+		events = append(events, eventName)
+	}
+	sort.Strings(branches)
+	sort.Strings(workflows)
+	sort.Strings(events)
+	if event != "" {
+		filteredRuns := make([]WorkflowRun, 0, len(allRuns))
+		for _, run := range allRuns {
+			if run.Event == event {
+				filteredRuns = append(filteredRuns, run)
+			}
 		}
-		// Only add if we haven't reached the limit for this workflow
-		if len(groupedRuns[run.WorkflowName]) < limit {
-			groupedRuns[run.WorkflowName] = append(groupedRuns[run.WorkflowName], run)
-		}
+		allRuns = filteredRuns
 	}
 
-	// Flatten for the runs array (for backwards compatibility if needed)
-	runs := make([]WorkflowRun, 0)
-	for _, wfName := range workflowOrder {
-		runs = append(runs, groupedRuns[wfName]...)
-	}
+	columns, workflowRows, workflowOrder := buildWorkflowGrid(allRuns, limit)
 
 	// Render template
 	w.Header().Set("Content-Type", "text/html")
-	if err := s.tmpl.ExecuteTemplate(w, "repository.html", map[string]interface{}{
+	if err := s.tmpl.ExecuteTemplate(w, "repository-matrix.html", map[string]interface{}{
 		"repository":      repo,
-		"runs":            runs,
-		"groupedRuns":     groupedRuns,
+		"columns":         columns,
+		"workflowRows":    workflowRows,
 		"workflowOrder":   workflowOrder,
 		"branches":        branches,
 		"workflows":       workflows,
+		"events":          events,
 		"currentBranch":   branch,
 		"currentWorkflow": workflow,
+		"currentEvent":    event,
 		"currentLimit":    limit,
+		"currentView":     view,
+		"limitOptions":    []int{50, 100, 200, 500},
 	}); err != nil {
 		logger.Error("Failed to render repository template", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)

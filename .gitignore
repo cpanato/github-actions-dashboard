@@ -10,4 +10,5 @@ secrets.txt
 **/.terraform/
 iac/*/.terraform/*
 iac/*/.terraform.lock.hcl
+iac/gcp/*
 /kodata/.DS_Store

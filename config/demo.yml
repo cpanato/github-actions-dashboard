@@ -1,0 +1,28 @@
+demo_mode: true
+
+server:
+  address: "127.0.0.1"
+  port: 8080
+
+logging:
+  level: "info"
+  text: true
+
+database:
+  driver: "postgres"
+  url: "host=127.0.0.1 port=5432 user=dashboard-user password=local-dev-password dbname=dashboard sslmode=disable"
+  max_open_conns: 5
+  max_idle_conns: 2
+
+github:
+  app:
+    webhook_secret: "local-demo-webhook-secret"
+
+options:
+  default_time_window: "7d"
+  max_repos_per_page: 50
+  enable_realtime: true
+
+sessions:
+  secret_key: "local-demo-session-key-only"
+  lifetime: 86400
