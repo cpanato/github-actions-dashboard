@@ -61,3 +61,9 @@ CI runs these checks on pull requests and pushes to `main`. Releases use GoRelea
 ## License
 
 Apache License 2.0
+
+Configuration uses positive Go durations such as `24h` or `168h` (seven days).
+An explicit `options.enable_realtime: false` disables the WebSocket endpoint.
+Database-backed routes return HTTP 503 until schema initialization succeeds;
+the server retries initialization using the same pool shared by webhook handlers.
+Shutdown cancels initialization retries and closes realtime connections.

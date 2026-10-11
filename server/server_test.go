@@ -34,7 +34,7 @@ sessions:
 
 options:
   enable_realtime: true
-  default_time_window: "7d"
+  default_time_window: "168h"
   max_repos_per_page: 50
 `)
 

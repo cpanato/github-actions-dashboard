@@ -50,7 +50,12 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		conn: conn,
 		send: make(chan []byte, 256),
 	}
-	client.hub.register <- client
+	select {
+	case client.hub.register <- client:
+	case <-h.done:
+		conn.Close()
+		return
+	}
 
 	// Start pumps in separate goroutines
 	go client.writePump()

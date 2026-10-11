@@ -217,3 +217,32 @@ func TestHub_ConcurrentClientManagement(t *testing.T) {
 		t.Logf("Warning: ClientCount() = %d, expected 0 (may be timing dependent)", count)
 	}
 }
+
+func TestHubShutdownAndBackpressure(t *testing.T) {
+	hub := NewHub()
+	for i := 0; i < cap(hub.broadcast); i++ {
+		if err := hub.Broadcast("update", i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := hub.Broadcast("overflow", nil); err == nil {
+		t.Fatal("full queue should return an error")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	client := &Client{hub: hub, send: make(chan []byte, 1)}
+	done := make(chan struct{})
+	go func() { hub.Run(ctx); close(done) }()
+	hub.register <- client
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("hub did not stop")
+	}
+	if hub.ClientCount() != 0 {
+		t.Fatal("clients retained after shutdown")
+	}
+	if err := hub.Broadcast("late", nil); err == nil {
+		t.Fatal("stopped hub accepted broadcast")
+	}
+}
