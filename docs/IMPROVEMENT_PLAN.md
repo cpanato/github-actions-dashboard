@@ -41,3 +41,19 @@ per-user repository isolation are separate projects. Document these limits
 instead of claiming they are implemented. Existing repository rows cannot be
 assigned an installation without a subsequent installation or workflow event;
 the lifecycle PR must document that migration behavior.
+
+## Follow-up implementation order
+
+The original eight changes are merged. The next focused PRs cover:
+
+1. Local PostgreSQL: loopback port binding, password authentication for new volumes,
+   and instructions for existing volumes.
+2. API validation: reject invalid filters and provide bounded workflow pagination.
+3. WebSocket authorization: close connections when the authorizing session expires.
+4. Shutdown: drain accepted webhook work before closing the database.
+5. Browser failure paths: realtime disabled, reconnect, repository removal and
+   database outage/recovery.
+
+Each PR includes relevant validation and documentation. Commit creation and
+commit-rewriting rebases require explicit user approval. A durable webhook inbox
+with retries and processing metrics remains a separate project.
