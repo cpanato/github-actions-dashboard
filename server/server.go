@@ -5,6 +5,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -33,24 +34,24 @@ import (
 
 // Server represents the dashboard application server
 type Server struct {
-	config           *Config
-	db               *sql.DB
-	httpServer       *http.Server
-	handlers         []githubapp.EventHandler
-	base             *handler.Base
-	wsHub            *websocket.Hub
-	sessions         *scs.SessionManager
-	clientCreator    githubapp.ClientCreator
-	tmpl             *template.Template
-	ctx              context.Context
-	cancel           context.CancelFunc
-	ready            atomic.Bool
-	mu               sync.Mutex
-	closed           bool
-	workers          sync.WaitGroup
-	webhookScheduler *webhookScheduler
-	closeOnce        sync.Once
-	closeErr         error
+	config        *Config
+	db            *sql.DB
+	httpServer    *http.Server
+	handlers      []githubapp.EventHandler
+	base          *handler.Base
+	wsHub         *websocket.Hub
+	sessions      *scs.SessionManager
+	clientCreator githubapp.ClientCreator
+	tmpl          *template.Template
+	ctx           context.Context
+	cancel        context.CancelFunc
+	ready         atomic.Bool
+	mu            sync.Mutex
+	closed        bool
+	workers       sync.WaitGroup
+	webhookInbox  *webhookInbox
+	closeOnce     sync.Once
+	closeErr      error
 }
 
 // New creates a new Server instance
@@ -183,8 +184,8 @@ func New(config *Config) (*Server, error) {
 		tmpl:          tmpl,
 		ctx:           lifetimeCtx, cancel: cancel,
 	}
-	s.webhookScheduler = newWebhookScheduler(100, 100)
 	s.ready.Store(initErr == nil)
+	s.webhookInbox = newWebhookInbox(db, handlers, 4, s.ready.Load)
 	return s, nil
 }
 
@@ -278,10 +279,42 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	// GitHub webhook endpoint (unprotected, no sessions needed)
-	webhookHandler := githubapp.NewEventDispatcher(s.handlers, s.config.Github.App.WebhookSecret, githubapp.WithScheduler(
-		s.webhookScheduler,
-	))
-	mux.Handle("/api/github/hook", webhookHandler)
+	webhookHandler := githubapp.NewEventDispatcher(s.handlers, s.config.Github.App.WebhookSecret,
+		githubapp.WithScheduler(s.webhookInbox), githubapp.WithErrorCallback(func(w http.ResponseWriter, r *http.Request, err error) {
+			switch {
+			case errors.Is(err, errInboxUnavailable):
+				logger.Error("Failed to persist webhook", "error", err)
+				http.Error(w, "Webhook inbox unavailable", http.StatusServiceUnavailable)
+			case errors.Is(err, errDeliveryConflict):
+				http.Error(w, errDeliveryConflict.Error(), http.StatusConflict)
+			default:
+				var oversized *http.MaxBytesError
+				if errors.As(err, &oversized) {
+					http.Error(w, "Webhook payload too large", http.StatusRequestEntityTooLarge)
+					return
+				}
+				githubapp.DefaultErrorCallback(w, r, err)
+			}
+		}))
+	mux.Handle("/api/github/hook", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		payload, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 10<<20))
+		if err != nil {
+			var oversized *http.MaxBytesError
+			if errors.As(err, &oversized) {
+				http.Error(w, "Webhook payload too large", http.StatusRequestEntityTooLarge)
+			} else {
+				http.Error(w, "Cannot read webhook payload", http.StatusBadRequest)
+			}
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(payload))
+		webhookHandler.ServeHTTP(w, r)
+	}))
 
 	// Health check endpoint (unprotected, no sessions needed)
 	mux.HandleFunc("/api/health", s.handleHealth)
@@ -344,10 +377,10 @@ func (s *Server) Close() error {
 			defer cancel()
 			s.closeErr = httpServer.Shutdown(ctx)
 		}
-		if s.webhookScheduler != nil {
+		if s.webhookInbox != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := s.webhookScheduler.Close(ctx); s.closeErr == nil {
+			if err := s.webhookInbox.Close(ctx); s.closeErr == nil {
 				s.closeErr = err
 			}
 		}

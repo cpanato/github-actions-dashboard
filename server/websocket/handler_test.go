@@ -38,6 +38,7 @@ func TestWebSocketSessionExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	waitForSocketRegistration(t, hub)
 	if err := hub.Broadcast("before_expiry", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -88,6 +89,7 @@ func TestWebSocketWithoutSessionDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
+	waitForSocketRegistration(t, hub)
 	if err := hub.Broadcast("demo", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -97,5 +99,22 @@ func TestWebSocketWithoutSessionDeadline(t *testing.T) {
 	var message Message
 	if err := conn.ReadJSON(&message); err != nil || message.Type != "demo" {
 		t.Fatalf("demo socket: %+v %v", message, err)
+	}
+}
+
+// A successful upgrade precedes hub registration. Wait for the subscriber before
+// broadcasting so the test does not depend on goroutine scheduling.
+func waitForSocketRegistration(t *testing.T, hub *Hub) {
+	t.Helper()
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for hub.ClientCount() != 1 {
+		select {
+		case <-deadline.C:
+			t.Fatal("WebSocket client was not registered")
+		case <-ticker.C:
+		}
 	}
 }
