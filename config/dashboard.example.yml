@@ -68,3 +68,13 @@ options:
   
   # Enable WebSocket for real-time updates
   enable_realtime: true
+
+# Authorized users can see the entire shared dashboard.
+access:
+  allowed_users: [your-github-login]
+  allowed_organizations: []
+
+sessions:
+  lifetime: 86400
+  # Set true when deployed behind HTTPS.
+  secure: false

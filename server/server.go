@@ -60,6 +60,12 @@ func New(config *Config) (*Server, error) {
 		return nil, err
 	}
 
+	if !config.DemoMode {
+		if err := config.Access.Validate(); err != nil {
+			return nil, err
+		}
+	}
+
 	// Keep the pool stable so HTTP and webhook handlers recover together.
 	db, err := OpenDatabase(&config.Database)
 	if err != nil {
@@ -103,7 +109,11 @@ func New(config *Config) (*Server, error) {
 	if config.Sessions.Lifetime > 0 {
 		sessionLifetime = config.Sessions.Lifetime
 	}
-	sessions := auth.NewSessionManager(sessionLifetime)
+	secure := strings.HasPrefix(config.Server.PublicURL, "https://")
+	if config.Sessions.Secure != nil {
+		secure = *config.Sessions.Secure
+	}
+	sessions := auth.NewSessionManager(sessionLifetime, secure)
 
 	// Create WebSocket hub
 	var wsHub *websocket.Hub
@@ -256,7 +266,7 @@ func (s *Server) Handler() http.Handler {
 
 		oauthHandler := oauth2.NewHandler(
 			oauthConfig,
-			oauth2.OnLogin(auth.LoginCallback(s.config.Github, basePath, s.sessions)),
+			oauth2.OnLogin(auth.LoginCallback(s.config.Github, basePath, s.sessions, s.config.Access)),
 		)
 		mux.Handle("/login/callback", loggerMiddleware(sessionMiddleware(oauthHandler)))
 		logger.Info("OAuth callback route registered (unprotected)", "path", "/login/callback")

@@ -39,3 +39,13 @@ github:
     integration_id: 0  # Set via DASHBOARD_GITHUB_APP_INTEGRATION_ID
     webhook_secret: "" # Set via DASHBOARD_GITHUB_APP_WEBHOOK_SECRET
     private_key: ""    # Set via DASHBOARD_GITHUB_APP_PRIVATE_KEY
+
+# Set DASHBOARD_ALLOWED_USERS and/or DASHBOARD_ALLOWED_ORGANIZATIONS.
+# Empty allowlists prevent startup outside demo mode.
+access:
+  allowed_users: []
+  allowed_organizations: []
+
+sessions:
+  lifetime: 28800
+  secure: true
