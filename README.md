@@ -75,6 +75,15 @@ implemented database driver. The schema is initialized automatically, including
 additive installation-tracking migrations. Back up existing databases before
 upgrading a deployed instance.
 
+Large existing databases should create the two covering indexes added for the
+repository and flaky-check queries before upgrading, otherwise startup builds them
+without `CONCURRENTLY` and blocks webhook writes:
+
+```sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_runs_repo_stats ON workflow_runs(repository_id) INCLUDE (id, status, conclusion);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_check_runs_flaky ON check_runs(completed_at) INCLUDE (repository_id, name, conclusion) WHERE conclusion IN ('success', 'failure');
+```
+
 Relevant environment values:
 
 | Variable | Purpose |
@@ -86,6 +95,13 @@ Relevant environment values:
 | `DASHBOARD_DATABASE_CLOUD_SQL_INSTANCE` | Cloud SQL instance connection name |
 | `DASHBOARD_DATABASE_NAME`, `DASHBOARD_DATABASE_USER`, `DASHBOARD_DATABASE_PASSWORD` | Cloud SQL database credentials |
 | `DASHBOARD_ENV_PREFIX` | Replaces `DASHBOARD_` for supported credential/database/access/public-URL variables |
+
+Repository, analytics and flaky-check results are cached in memory for
+`cache.stats_ttl` (default `1m`), so dashboard data can lag webhooks by up to that
+long. Concurrent requests share one query, expired results are served while a
+refresh runs in the background, and each query is cancelled after two minutes.
+`cache.max_entries` bounds the number of cached parameter combinations; a negative
+`stats_ttl` disables caching.
 
 A database URL takes precedence over automatic Cloud SQL connection-string
 construction. Cloud SQL uses `/cloudsql/<instance>` Unix sockets, which must be

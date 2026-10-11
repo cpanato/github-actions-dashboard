@@ -56,8 +56,12 @@ cache:
   # How long to cache workflow run data
   workflow_ttl: "15m"
   
-  # Maximum number of cache entries
+  # Maximum number of cached repository/analytics/flaky-check results
   max_entries: 10000
+
+  # How long repository, analytics and flaky-check results are served from
+  # memory; expired results are refreshed in the background (default: 1m)
+  stats_ttl: "1m"
 
 options:
   # Default time window for displaying workflows

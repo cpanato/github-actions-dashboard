@@ -74,6 +74,10 @@ type CacheConfig struct {
 
 	// Maximum cache entries
 	MaxEntries int `yaml:"max_entries"`
+
+	// How long repository, analytics and flaky-check results are served from
+	// memory before being refreshed in the background (default: 1m)
+	StatsTTL time.Duration `yaml:"stats_ttl"`
 }
 
 type DashboardOptions struct {
@@ -105,6 +109,9 @@ func ParseConfig(bytes []byte) (*Config, error) {
 	}
 	if c.Cache.MaxEntries == 0 {
 		c.Cache.MaxEntries = 10000
+	}
+	if c.Cache.StatsTTL == 0 {
+		c.Cache.StatsTTL = time.Minute
 	}
 	if c.Options.DefaultTimeWindow == "" {
 		c.Options.DefaultTimeWindow = "12h"

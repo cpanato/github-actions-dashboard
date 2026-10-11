@@ -43,6 +43,7 @@ type Server struct {
 	sessions      *scs.SessionManager
 	clientCreator githubapp.ClientCreator
 	tmpl          *template.Template
+	stats         *statsCache
 	ctx           context.Context
 	cancel        context.CancelFunc
 	ready         atomic.Bool
@@ -184,6 +185,7 @@ func New(config *Config) (*Server, error) {
 		tmpl:          tmpl,
 		ctx:           lifetimeCtx, cancel: cancel,
 	}
+	s.stats = newStatsCache(lifetimeCtx, config.Cache.StatsTTL, config.Cache.MaxEntries)
 	s.ready.Store(initErr == nil)
 	s.webhookInbox = newWebhookInbox(db, handlers, 4, s.ready.Load)
 	return s, nil
@@ -443,7 +445,9 @@ func (s *Server) handleRepositories(w http.ResponseWriter, r *http.Request) {
 	logger := clog.FromContext(ctx)
 
 	// Get repositories with statistics
-	repos, err := GetRepositories(ctx, s.db, true)
+	repos, err := cachedStats(ctx, s.stats, "repositories", func(ctx context.Context) ([]Repository, error) {
+		return GetRepositories(ctx, s.db, true)
+	})
 	if err != nil {
 		logger.Error("Failed to get repositories", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -541,7 +545,9 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	analytics, err := GetAnalytics(ctx, s.db, repoID, days)
+	analytics, err := cachedStats(ctx, s.stats, fmt.Sprintf("analytics:%d:%d", repoID, days), func(ctx context.Context) (*Analytics, error) {
+		return GetAnalytics(ctx, s.db, repoID, days)
+	})
 	if err != nil {
 		logger.Error("Failed to get analytics", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -586,7 +592,9 @@ func (s *Server) handleFlakyTests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	flakyTests, err := GetFlakyTests(ctx, s.db, repoID, minRuns, days)
+	flakyTests, err := cachedStats(ctx, s.stats, fmt.Sprintf("flaky:%d:%d:%d", repoID, days, minRuns), func(ctx context.Context) ([]FlakyTest, error) {
+		return GetFlakyTests(ctx, s.db, repoID, minRuns, days)
+	})
 	if err != nil {
 		logger.Error("Failed to get flaky tests", "error", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)

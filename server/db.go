@@ -121,6 +121,8 @@ CREATE INDEX IF NOT EXISTS idx_workflow_runs_repository ON workflow_runs(reposit
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_created_at ON workflow_runs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_conclusion ON workflow_runs(conclusion);
+-- Covers the per-repository statistics so they can be answered by an index-only scan.
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_repo_stats ON workflow_runs(repository_id) INCLUDE (id, status, conclusion);
 
 CREATE TABLE IF NOT EXISTS workflow_jobs (
 	id BIGINT PRIMARY KEY,
@@ -155,4 +157,6 @@ CREATE INDEX IF NOT EXISTS idx_check_runs_repository ON check_runs(repository_id
 CREATE INDEX IF NOT EXISTS idx_check_runs_name ON check_runs(name);
 CREATE INDEX IF NOT EXISTS idx_check_runs_conclusion ON check_runs(conclusion);
 CREATE INDEX IF NOT EXISTS idx_check_runs_completed ON check_runs(completed_at DESC);
+-- Covers the flaky-check aggregation (completed success/failure checks in a date window).
+CREATE INDEX IF NOT EXISTS idx_check_runs_flaky ON check_runs(completed_at) INCLUDE (repository_id, name, conclusion) WHERE conclusion IN ('success', 'failure');
 `
