@@ -33,23 +33,24 @@ import (
 
 // Server represents the dashboard application server
 type Server struct {
-	config        *Config
-	db            *sql.DB
-	httpServer    *http.Server
-	handlers      []githubapp.EventHandler
-	base          *handler.Base
-	wsHub         *websocket.Hub
-	sessions      *scs.SessionManager
-	clientCreator githubapp.ClientCreator
-	tmpl          *template.Template
-	ctx           context.Context
-	cancel        context.CancelFunc
-	ready         atomic.Bool
-	mu            sync.Mutex
-	closed        bool
-	workers       sync.WaitGroup
-	closeOnce     sync.Once
-	closeErr      error
+	config           *Config
+	db               *sql.DB
+	httpServer       *http.Server
+	handlers         []githubapp.EventHandler
+	base             *handler.Base
+	wsHub            *websocket.Hub
+	sessions         *scs.SessionManager
+	clientCreator    githubapp.ClientCreator
+	tmpl             *template.Template
+	ctx              context.Context
+	cancel           context.CancelFunc
+	ready            atomic.Bool
+	mu               sync.Mutex
+	closed           bool
+	workers          sync.WaitGroup
+	webhookScheduler *webhookScheduler
+	closeOnce        sync.Once
+	closeErr         error
 }
 
 // New creates a new Server instance
@@ -182,6 +183,7 @@ func New(config *Config) (*Server, error) {
 		tmpl:          tmpl,
 		ctx:           lifetimeCtx, cancel: cancel,
 	}
+	s.webhookScheduler = newWebhookScheduler(100, 100)
 	s.ready.Store(initErr == nil)
 	return s, nil
 }
@@ -277,7 +279,7 @@ func (s *Server) Handler() http.Handler {
 
 	// GitHub webhook endpoint (unprotected, no sessions needed)
 	webhookHandler := githubapp.NewEventDispatcher(s.handlers, s.config.Github.App.WebhookSecret, githubapp.WithScheduler(
-		githubapp.QueueAsyncScheduler(100, 100),
+		s.webhookScheduler,
 	))
 	mux.Handle("/api/github/hook", webhookHandler)
 
@@ -341,6 +343,13 @@ func (s *Server) Close() error {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			s.closeErr = httpServer.Shutdown(ctx)
+		}
+		if s.webhookScheduler != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := s.webhookScheduler.Close(ctx); s.closeErr == nil {
+				s.closeErr = err
+			}
 		}
 		s.workers.Wait()
 		if s.db != nil {
