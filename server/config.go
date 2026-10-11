@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cpanato/github-actions-dashboard/server/auth"
 	"github.com/palantir/go-baseapp/baseapp"
 	"github.com/palantir/go-githubapp/githubapp"
 	"gopkg.in/yaml.v2"
@@ -29,6 +30,7 @@ type Config struct {
 	Cache    CacheConfig        `yaml:"cache"`
 	Options  DashboardOptions   `yaml:"options"`
 	Sessions SessionsConfig     `yaml:"sessions"`
+	Access   auth.AccessPolicy  `yaml:"access"`
 	DemoMode bool               `yaml:"demo_mode"`
 }
 
@@ -87,7 +89,8 @@ type DashboardOptions struct {
 
 type SessionsConfig struct {
 	// Lifetime in seconds (default: 86400 = 24 hours)
-	Lifetime int `yaml:"lifetime"`
+	Lifetime int   `yaml:"lifetime"`
+	Secure   *bool `yaml:"secure"`
 }
 
 func ParseConfig(bytes []byte) (*Config, error) {
@@ -130,6 +133,12 @@ func ParseConfig(bytes []byte) (*Config, error) {
 	}
 	if c.Github.V3APIURL == "" {
 		c.Github.V3APIURL = "https://api.github.com"
+	}
+
+	for key, dest := range map[string]*[]string{"ALLOWED_USERS": &c.Access.AllowedUsers, "ALLOWED_ORGANIZATIONS": &c.Access.AllowedOrganizations} {
+		if value, ok := os.LookupEnv(envPrefix + key); ok {
+			*dest = strings.Split(value, ",")
+		}
 	}
 
 	// Server configuration from environment

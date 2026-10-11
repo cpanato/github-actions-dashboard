@@ -1,260 +1,73 @@
-# Authentication & Security
+# Authentication and authorization
 
-## Overview
-
-The GitHub Actions Dashboard implements OAuth-based authentication to protect sensitive workflow data from unauthorized access. Only users who are members of organizations where the GitHub App is installed can access the dashboard.
-
-## How It Works
-
-### 1. GitHub OAuth Flow
-
-When a user tries to access the dashboard without being authenticated:
-
-1. User is redirected to GitHub OAuth authorization page
-2. User grants permission to the app
-3. GitHub redirects back with an authorization code
-4. App exchanges code for an access token
-5. App fetches the user's GitHub username
-6. Username is stored in a secure session cookie
-7. User is redirected back to the original page
-
-### 2. Session Management
-
-- **Cookie-based sessions**: Secure, HTTP-only cookies
-- **Lifetime**: Default 24 hours (configurable)
-- **Auto-renewal**: Sessions renew on activity
-
-### 3. Access Control
-
-The system provides two levels of protection:
-
-#### Basic Authentication (`RequireLogin`)
-- Checks if user is authenticated with GitHub
-- Redirects to OAuth login if not authenticated
-- Applied to all dashboard routes
-
-#### Repository Access Check (Optional)
-- Verifies user has access to at least one repository where the app is installed
-- Can be added for stricter access control
-- Checks actual GitHub repository permissions
-
-## Configuration
-
-### Session Configuration
-
-Add to your `config.yml`:
+Outside the loopback-only demo profile, users sign in with GitHub OAuth and must
+pass an explicit allowlist before receiving an authorized dashboard session.
+An empty allowlist prevents server startup. Existing username-only sessions do
+not grant access.
 
 ```yaml
+access:
+  allowed_users: [your-github-login]
+  allowed_organizations: [your-organization]
 sessions:
-  # Session lifetime in seconds (default: 86400 = 24 hours)
-  lifetime: 86400
+  lifetime: 28800
+  # Defaults to true when server.public_url uses https://.
+  secure: true
 ```
 
-### GitHub App OAuth Configuration
+Alternatively set comma-separated `DASHBOARD_ALLOWED_USERS` and
+`DASHBOARD_ALLOWED_ORGANIZATIONS`. Environment values replace the corresponding
+YAML lists. Blank entries are rejected.
 
-The GitHub App must be configured with OAuth capabilities:
+Either an exact user match (case insensitive) or active membership in an allowed
+organization grants access to **all tracked repositories, aggregates and
+WebSocket messages**. This policy does not isolate repositories by user. Only
+allow people entitled to see the entire dashboard dataset.
 
-1. Go to your GitHub App settings
-2. Set **Callback URL**: `https://your-domain.com/login/callback`
-3. Enable **Request user authorization (OAuth) during installation**
-4. Set permissions:
-   - **Repository permissions**:
-     - Actions: Read
-     - Checks: Read
-     - Metadata: Read
-   - **Organization permissions**:
-     - Members: Read (to verify org membership)
+Organization membership is checked with the authenticated user's GitHub client
+at login. Configure the GitHub App's organization Members permission as read and
+ensure the app/user token can access the allowed organization. Pending membership
+and 404 responses deny access. Other API failures return 503 without creating an
+authorized session. Explicitly allowed users do not need an organization lookup.
+Membership is checked again at the next login; revocation is bounded by the
+session lifetime, not continuously checked for an existing session or socket.
 
-## Protected Routes
+## GitHub App setup
 
-By default, these routes require authentication:
+Set the OAuth callback to `https://your-domain.com/login/callback`, and configure
+`server.public_url` or `DASHBOARD_PUBLIC_URL` to match. Set these environment values:
 
-- `/` - Main dashboard
-- `/api/repositories` - Repository list
-- `/api/workflows` - Workflow runs
-- `/api/analytics` - Analytics data
-- `/api/flaky-tests` - Flaky test detection
-- `/api/trends` - Trend data
-- `/ws` - WebSocket connection
+- `DASHBOARD_GITHUB_APP_INTEGRATION_ID`
+- `DASHBOARD_GITHUB_APP_PRIVATE_KEY` (PEM contents)
+- `DASHBOARD_GITHUB_APP_WEBHOOK_SECRET`
+- `DASHBOARD_GITHUB_OAUTH_CLIENT_ID`
+- `DASHBOARD_GITHUB_OAUTH_CLIENT_SECRET`
 
-## Unprotected Routes
+The App needs repository Actions, Checks and Metadata read permissions. Subscribe
+to workflow_run, check_run, installation and installation_repositories events.
+Webhook requests use signature verification rather than user sessions.
 
-These routes are publicly accessible:
+## Routes and sessions
 
-- `/api/health` - Health check
-- `/api/github/hook` - GitHub webhook endpoint
-- `/login/callback` - OAuth callback
-- `/static/*` - Static assets
+Dashboard pages, repository pages, data APIs and `/ws` require an authorized
+session. `/api/health`, `/api/github/hook`, `/api/github/auth`, `/login/callback`
+and `/static/` are public. Login rotates the session token before storing the
+username and authorization result. Cookies are HttpOnly with SameSite=Lax; set
+`secure: true` for HTTPS deployments behind a proxy if no public URL is configured.
+WebSocket upgrades reject an Origin whose host differs from the request host.
+Upgrade errors do not log request headers or session cookies.
 
-## Security Best Practices
+The default session store is in memory. Restarts invalidate sessions. Multiple
+replicas require a shared session store or routing affinity; shared session
+storage is not implemented. Sessions expire after the configured lifetime and
+are not extended indefinitely by activity.
 
-### Production Deployment
+## Local use
 
-1. **Enable HTTPS**:
-   - Cloud Run automatically provides HTTPS
-  - Configure the session cookie with the `Secure` attribute in production
+For real OAuth testing, start PostgreSQL with `docker compose up -d postgres`,
+configure `config/local.dev.yml`, set credentials and an allowlist, and run
+`go run . -config config/local.dev.yml`. A tunnel may be needed for GitHub webhooks.
+Use the same externally reachable public URL for the OAuth callback.
 
-2. **Secure cookie settings**:
-   ```go
-   sessions.Cookie.HttpOnly = true       // Prevent JavaScript access
-   sessions.Cookie.SameSite = http.SameSiteLaxMode  // CSRF protection
-   sessions.Cookie.Secure = true         // HTTPS only
-   ```
-
-3. **Set appropriate session lifetime**:
-   - Development: 24 hours (convenient)
-   - Production: 8 hours (more secure)
-   - High-security: 1 hour with auto-renewal
-
-### Session Storage
-
-Current implementation uses in-memory sessions via `scs/v2`. For production with multiple instances, consider:
-
-- **Redis store**: `github.com/alexedwards/scs/redisstore`
-- **PostgreSQL store**: `github.com/alexedwards/scs/postgresstore`
-- **Cloud SQL store**: PostgreSQL-based
-
-Example Redis configuration:
-
-```go
-import "github.com/alexedwards/scs/redisstore"
-
-redisPool := &redis.Pool{/* config */}
-sessions.Store = redisstore.New(redisPool)
-```
-
-## Access Control Examples
-
-### Simple Authentication
-
-```go
-// In server.go
-mux.Handle("/", requireAuth(http.HandlerFunc(s.handleDashboard)))
-```
-
-### With Repository Access Check
-
-```go
-// Add stricter check
-requireRepoAccess := auth.CheckRepositoryAccess(sessions, installations, clientCreator)
-
-mux.Handle("/",
-  requireAuth(
-    requireRepoAccess(
-      http.HandlerFunc(s.handleDashboard)
-    )
-  )
-)
-```
-
-### Custom Authorization
-
-```go
-func requireOrgMembership(org string) func(http.Handler) http.Handler {
-  return func(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-      username := sessions.GetString(r.Context(), SessionKeyUsername)
-
-      // Check org membership
-      client, _ := clientCreator.NewAppClient()
-      member, _, err := client.Organizations.IsMember(ctx, org, username)
-
-      if !member {
-        http.Error(w, "Forbidden", http.StatusForbidden)
-        return
-      }
-
-      next.ServeHTTP(w, r)
-    })
-  }
-}
-```
-
-## Troubleshooting
-
-### "Session not found" errors
-
-- Ensure cookies are enabled in browser
-- Sessions are held in the configured session store; an in-memory store loses sessions on restart.
-
-### OAuth redirect issues
-
-- Verify **Callback URL** in GitHub App settings matches your deployment
-- Check `github.v3_api_url` in config matches your GitHub instance
-- Ensure `github.app.integration_id` is correct
-
-### "Unauthorized" after successful login
-
-- Verify user has access to at least one repository with the app installed
-- Check GitHub App permissions (Actions: Read, Checks: Read)
-- Ensure org membership is properly configured
-
-### Multiple instance session sync
-
-- Implement a shared session store (Redis, PostgreSQL)
-- Or use sticky sessions in load balancer
-
-## Testing Authentication Locally
-
-1. **Set up GitHub App OAuth**:
-   ```bash
-   # Use ngrok for local testing
-   ngrok http 8080
-
-   # Set callback URL in GitHub App:
-   # https://your-ngrok-url.ngrok.io/login/callback
-   ```
-
-2. **Configure environment**:
-   ```bash
-   export DASHBOARD_GITHUB_APP_INTEGRATION_ID=123456
-   export DASHBOARD_GITHUB_APP_WEBHOOK_SECRET="your-secret"
-   export DASHBOARD_GITHUB_APP_PRIVATE_KEY="$(cat private-key.pem)"
-   ```
-
-3. **Run dashboard**:
-   ```bash
-   ./github-actions-dashboard --config config/local.yml
-   ```
-
-4. **Test flow**:
-   - Navigate to `http://localhost:8080`
-   - You'll be redirected to GitHub OAuth
-   - After authorization, you'll be back at the dashboard
-
-## API Authentication for Automation
-
-For programmatic access (CI/CD, scripts), consider adding API token support:
-
-```go
-func requireAPIToken() func(http.Handler) http.Handler {
-  return func(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-      token := r.Header.Get("Authorization")
-      if !strings.HasPrefix(token, "Bearer ") {
-        http.Error(w, "Unauthorized", http.StatusUnauthorized)
-        return
-      }
-
-      // Validate token
-      if !validateToken(token[7:]) {
-        http.Error(w, "Invalid token", http.StatusUnauthorized)
-        return
-      }
-
-      next.ServeHTTP(w, r)
-    })
-  }
-}
-```
-
-## Migration from Unprotected Setup
-
-If upgrading from a version without authentication:
-
-1. **Add session lifetime configuration** to `config.yml`
-2. **Update GitHub App** with OAuth settings
-3. **Deploy new version**
-4. **Users must authenticate** on first access
-
-All existing data remains accessible after authentication.
+`config/demo.yml` skips OAuth and allowlists, seeds synthetic data and refuses
+non-loopback binds or a public URL. It is intended for local demos and E2E tests.

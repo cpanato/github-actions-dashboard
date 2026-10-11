@@ -5,6 +5,8 @@
 package auth
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -17,12 +19,58 @@ import (
 )
 
 const (
-	SessionKeyUsername = "username"
-	SessionKeyRedirect = "redirect"
+	SessionKeyUsername   = "username"
+	SessionKeyRedirect   = "redirect"
+	SessionKeyAuthorized = "authorized"
 )
 
+// AccessPolicy authorizes access to the entire shared dashboard.
+type AccessPolicy struct {
+	AllowedUsers         []string `yaml:"allowed_users"`
+	AllowedOrganizations []string `yaml:"allowed_organizations"`
+}
+
+// Validate rejects empty policies and blank entries outside demo mode.
+func (p AccessPolicy) Validate() error {
+	if len(p.AllowedUsers)+len(p.AllowedOrganizations) == 0 {
+		return fmt.Errorf("configure access.allowed_users or access.allowed_organizations outside demo mode")
+	}
+	for _, names := range [][]string{p.AllowedUsers, p.AllowedOrganizations} {
+		for _, name := range names {
+			if strings.TrimSpace(name) == "" {
+				return fmt.Errorf("access allowlist entries must not be blank")
+			}
+		}
+	}
+	return nil
+}
+
+func (p AccessPolicy) authorize(ctx context.Context, client *github.Client, username string) (bool, error) {
+	if username == "" {
+		return false, nil
+	}
+	for _, user := range p.AllowedUsers {
+		if strings.EqualFold(strings.TrimSpace(user), username) {
+			return true, nil
+		}
+	}
+	for _, org := range p.AllowedOrganizations {
+		membership, response, err := client.Organizations.GetOrgMembership(ctx, "", strings.TrimSpace(org))
+		if err != nil {
+			if response != nil && response.StatusCode == http.StatusNotFound {
+				continue
+			}
+			return false, fmt.Errorf("verify organization membership: %w", err)
+		}
+		if membership.GetState() == "active" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // LoginCallback handles successful OAuth login
-func LoginCallback(c githubapp.Config, basePath string, sessions *scs.SessionManager) oauth2.LoginCallback {
+func LoginCallback(c githubapp.Config, basePath string, sessions *scs.SessionManager, policy AccessPolicy) oauth2.LoginCallback {
 	return func(w http.ResponseWriter, r *http.Request, login *oauth2.Login) {
 		ctx := r.Context()
 		logger := clog.FromContext(ctx)
@@ -50,18 +98,25 @@ func LoginCallback(c githubapp.Config, basePath string, sessions *scs.SessionMan
 			return
 		}
 
-		logger.Info("User authenticated via OAuth", "user", user.GetLogin())
-
-		// Store username in session
-		sessions.Put(r.Context(), SessionKeyUsername, user.GetLogin())
-		logger.Info("Stored username in session", "user", user.GetLogin())
-
-		// Verify session was stored by immediately reading it back
-		stored := sessions.GetString(r.Context(), SessionKeyUsername)
-		logger.Info("Session verification check",
-			"user", user.GetLogin(),
-			"stored_value", stored,
-			"matches", stored == user.GetLogin())
+		allowed, err := policy.authorize(ctx, client, user.GetLogin())
+		if err != nil || !allowed {
+			if destroyErr := sessions.Destroy(ctx); destroyErr != nil {
+				logger.Warn("Failed to clear session", "error", destroyErr)
+			}
+			if err != nil {
+				logger.Error("Authorization check failed", "error", err)
+				http.Error(w, "Authorization unavailable", http.StatusServiceUnavailable)
+			} else {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+			}
+			return
+		}
+		if err := sessions.RenewToken(ctx); err != nil {
+			http.Error(w, "Session unavailable", http.StatusInternalServerError)
+			return
+		}
+		sessions.Put(ctx, SessionKeyUsername, user.GetLogin())
+		sessions.Put(ctx, SessionKeyAuthorized, true)
 
 		// Redirect to original page or home
 		target := sessions.PopString(r.Context(), SessionKeyRedirect)
@@ -84,22 +139,13 @@ func RequireLogin(sessions *scs.SessionManager, basePath string) func(http.Handl
 			ctx := r.Context()
 			logger := clog.FromContext(ctx)
 
-			// Skip authentication for OAuth-related paths
-			if strings.HasPrefix(r.URL.Path, "/login") ||
-				strings.HasPrefix(r.URL.Path, "/api/github/auth") ||
-				strings.HasPrefix(r.URL.Path, "/api/github/hook") {
-				logger.Debug("Skipping auth check for unprotected route", "path", r.URL.Path)
-				next.ServeHTTP(w, r)
-				return
-			}
-
 			user := sessions.GetString(r.Context(), SessionKeyUsername)
 			logger.Info("RequireLogin: Checking authentication",
 				"path", r.URL.Path,
 				"user_from_session", user,
 				"has_user", user != "")
 
-			if user == "" {
+			if user == "" || !sessions.GetBool(ctx, SessionKeyAuthorized) {
 				// Store redirect target (but not if already going to OAuth)
 				if !strings.HasPrefix(r.URL.Path, "/login") && !strings.HasPrefix(r.URL.Path, "/api/github/") {
 					sessions.Put(r.Context(), SessionKeyRedirect, r.URL.String())
@@ -123,12 +169,12 @@ func RequireLogin(sessions *scs.SessionManager, basePath string) func(http.Handl
 }
 
 // NewSessionManager creates a new session manager with the given configuration
-func NewSessionManager(lifetime int) *scs.SessionManager {
+func NewSessionManager(lifetime int, secure bool) *scs.SessionManager {
 	sessions := scs.New()
 	sessions.Cookie.Name = "dashboard_session"
 	sessions.Cookie.HttpOnly = true
 	sessions.Cookie.SameSite = http.SameSiteLaxMode
-	sessions.Cookie.Secure = false // Set to true in production with HTTPS
+	sessions.Cookie.Secure = secure
 
 	// Note: scs v2 doesn't support MaxAge, use Lifetime instead
 	if lifetime > 0 {

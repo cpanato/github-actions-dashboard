@@ -14,10 +14,6 @@ import (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(_ *http.Request) bool {
-		// Allow all origins for now (consider restricting in production)
-		return true
-	},
 }
 
 // ServeWS handles WebSocket requests from clients
@@ -38,8 +34,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logger.Error("Failed to upgrade WebSocket connection",
 			"error", err,
-			"remote_addr", r.RemoteAddr,
-			"headers", r.Header)
+			"remote_addr", r.RemoteAddr)
 		return
 	}
 
