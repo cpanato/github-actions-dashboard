@@ -13,6 +13,7 @@ about 10 GB of data) this already shows:
 | `check_runs` | 21.9 M | 7.6 GB |
 | `workflow_runs` | 5.0 M | 1.9 GB |
 | `workflow_jobs` | 0 | unused |
+| `webhook_deliveries` | not measured | durable webhook inbox with raw payloads, never pruned |
 
 Consequences: slow aggregate queries (Flaky Tests took ~100 s, Repositories
 ~14 s before covering indexes and caching), growing disk and backup cost, and
@@ -46,6 +47,10 @@ retention:
   # Delete runs older than this. Empty or 0 disables cleanup (default).
   check_runs: "90d"        # accepts Go durations or <n>d
   workflow_runs: "365d"
+  # Finished webhook deliveries (succeeded) older than this; failed ones are
+  # kept longer for diagnosis.
+  webhook_deliveries: "14d"
+  webhook_deliveries_failed: "60d"
   # Rows deleted per transaction.
   batch_size: 5000
   # Pause between batches to leave I/O for foreground queries.
@@ -125,6 +130,12 @@ WHERE id IN (
   (or a cleanup and a future migration) cannot overlap; exit 0 with a message
   if the lock is held.
 - Cancel cleanly on SIGINT/SIGTERM between batches.
+
+`webhook_deliveries` (the durable inbox added in #142) is pruned by `state` and
+`completed_at`/`received_at`: never delete `pending` or `processing` rows, and
+keep `failed` rows longer because they hold payloads and errors for diagnosis.
+It is deleted in batches with the same algorithm; index `state, received_at` if
+the table is large.
 
 Order: delete `check_runs` and `workflow_runs` independently; there are no
 foreign keys between them. `workflow_jobs` references `workflow_runs`
