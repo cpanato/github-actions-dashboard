@@ -94,7 +94,11 @@ webhook handlers. Shutdown cancels retries and closes realtime connections.
 Use HTTPS and secure cookies in production. Sessions are held in memory, so
 restarts invalidate them; multiple replicas need shared session storage or routing
 affinity. Webhook processing uses an in-memory asynchronous queue: acknowledgement
-does not guarantee durable persistence, and failures require redelivery. Cloud Run
+does not guarantee durable persistence, and failures require redelivery. Shutdown
+stops accepting new webhook work and drains accepted deliveries before closing
+the database. After a 30-second drain window, unfinished work is cancelled;
+handlers also have a 30-second execution deadline. Forced termination can still
+lose queued deliveries. Cloud Run
 and other deployments must provision the database connection and secrets separately.
 `make ko-local` builds a local image; the repository does not provide a deploy target.
 
