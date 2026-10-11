@@ -1,5 +1,10 @@
 # GitHub Actions Dashboard Refactoring Plan
 
+> Historical proposal: this document describes the pre-refactoring application
+> and planned work, rather than current behavior. See [README](README.md),
+> [supported features](FEATURES.md) and the
+> [current improvement plan](docs/IMPROVEMENT_PLAN.md) for implementation status.
+
 ## Overview
 
 This document outlines a comprehensive refactoring strategy for the GitHub Actions Dashboard, inspired by [palantir/policy-bot](https://github.com/palantir/policy-bot)'s architecture.
