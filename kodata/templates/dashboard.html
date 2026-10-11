@@ -6,7 +6,7 @@
 	<script src="https://unpkg.com/htmx.org@1.9.10"></script>
 	<script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-50">
+<body class="bg-gray-50" data-realtime="{{.enableRealtime}}">
 	<div class="container mx-auto px-4 py-8">
 		<header class="mb-8">
 			<div class="flex items-center gap-4 mb-4">
@@ -107,45 +107,6 @@
 			</div>
 		</div>
 	</div>
-
-	<script>
-		// Populate repository filter from repositories data
-		function populateRepoFilter() {
-			fetch('/api/repositories')
-				.then(r => r.json())
-				.then(data => {
-					const select = document.getElementById('workflow-repo-filter');
-					if (data.repositories) {
-						data.repositories.forEach(repo => {
-							const option = document.createElement('option');
-							option.value = repo.id;
-							option.textContent = repo.full_name;
-							select.appendChild(option);
-						});
-					}
-				});
-		}
-
-		// Update workflow filters
-		function updateWorkflowFilters() {
-			const repoId = document.getElementById('workflow-repo-filter').value;
-			const conclusion = document.getElementById('workflow-conclusion-filter').value;
-			const limit = document.getElementById('workflow-limit').value;
-
-			const params = new URLSearchParams();
-			if (repoId) params.set('repository_id', repoId);
-			if (conclusion) params.set('conclusion', conclusion);
-			if (limit) params.set('limit', limit);
-
-			const url = '/api/workflows?' + params.toString();
-			htmx.ajax('GET', url, {target: '#workflows-container', swap: 'innerHTML'});
-		}
-
-		// Initialize on page load
-		document.addEventListener('DOMContentLoaded', function() {
-			populateRepoFilter();
-		});
-	</script>
 
 	<script src="/static/dashboard.js"></script>
 </body>

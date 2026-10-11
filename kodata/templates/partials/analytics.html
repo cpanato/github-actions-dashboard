@@ -29,3 +29,7 @@
 	<div class="text-center text-gray-500">No analytics data available</div>
 </div>
 {{end}}
+
+{{if .analytics}}
+<div id="trend-indicator" hx-swap-oob="innerHTML">{{printf "%.1f" .analytics.SuccessRate}}%</div>
+{{end}}

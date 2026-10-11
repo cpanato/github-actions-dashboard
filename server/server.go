@@ -380,22 +380,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to read from KO_DATA_PATH first (for ko builds), then from local
-	templatePath := filepath.Join(os.Getenv("KO_DATA_PATH"), "templates/dashboard.html")
-	// #nosec G703 -- KO_DATA_PATH is deployment-controlled; the template filename is fixed.
-	content, err := os.ReadFile(templatePath)
-	if err != nil {
-		// Fall back to local file
-		content, err = os.ReadFile("kodata/templates/dashboard.html")
-		if err != nil {
-			http.Error(w, "Template not found", http.StatusInternalServerError)
-			return
-		}
-	}
-
 	w.Header().Set("Content-Type", "text/html")
-	if _, err := w.Write(content); err != nil {
-		clog.FromContext(r.Context()).Warn("Failed to write dashboard response", "error", err)
+	if err := s.tmpl.ExecuteTemplate(w, "dashboard.html", map[string]interface{}{"enableRealtime": s.config.Options.EnableRealtime}); err != nil {
+		clog.FromContext(r.Context()).Error("Failed to render dashboard", "error", err)
 	}
 }
 
