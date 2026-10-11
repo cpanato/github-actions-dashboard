@@ -56,6 +56,18 @@ archives:
 checksum:
   name_template: 'checksums.txt'
 
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    output: true
+    args:
+      - sign-blob
+      - --yes
+      - --bundle=${signature}
+      - ${artifact}
+    signature: ${artifact}.sigstore.json
+
 snapshot:
   version_template: "{{ .Tag }}-next"
 
