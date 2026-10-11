@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
  completed_at TIMESTAMPTZ,
  last_error TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS failure_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS failure_total INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending ON webhook_deliveries(available_at,received_at) WHERE state='pending';
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_leases ON webhook_deliveries(locked_until) WHERE state='processing';
 

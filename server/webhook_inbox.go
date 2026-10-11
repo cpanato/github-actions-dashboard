@@ -23,6 +23,7 @@ type inboxDelivery struct {
 	id, event string
 	payload   []byte
 	attempt   int
+	failures  int
 }
 
 // webhookInbox persists accepted work and claims it with PostgreSQL leases.
@@ -73,8 +74,17 @@ func (s *webhookInbox) Schedule(ctx context.Context, d githubapp.Dispatch) error
 	hash := hex.EncodeToString(digest[:])
 	var storedEvent, storedHash string
 	err := s.db.QueryRowContext(ctx, `INSERT INTO webhook_deliveries(delivery_id,event_type,payload,payload_hash)
- VALUES($1,$2,$3,$4) ON CONFLICT(delivery_id) DO UPDATE SET delivery_id=EXCLUDED.delivery_id
+ VALUES($1,$2,$3,$4) ON CONFLICT(delivery_id) DO UPDATE SET
+ state=CASE WHEN webhook_deliveries.state='failed' THEN 'pending' ELSE webhook_deliveries.state END,
+ failure_count=CASE WHEN webhook_deliveries.state='failed' THEN 0 ELSE webhook_deliveries.failure_count END,
+ available_at=CASE WHEN webhook_deliveries.state='failed' THEN NOW() ELSE webhook_deliveries.available_at END,
+ last_error=CASE WHEN webhook_deliveries.state='failed' THEN '' ELSE webhook_deliveries.last_error END,
+ updated_at=CASE WHEN webhook_deliveries.state='failed' THEN NOW() ELSE webhook_deliveries.updated_at END
+ WHERE webhook_deliveries.event_type=EXCLUDED.event_type AND webhook_deliveries.payload_hash=EXCLUDED.payload_hash
  RETURNING event_type,payload_hash`, d.DeliveryID, d.EventType, d.Payload, hash).Scan(&storedEvent, &storedHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errDeliveryConflict
+	}
 	if err != nil {
 		return fmt.Errorf("%w: %w", errInboxUnavailable, err)
 	}
@@ -97,7 +107,7 @@ func (s *webhookInbox) claim(ctx context.Context) (inboxDelivery, error) {
  ) UPDATE webhook_deliveries w SET state='processing',attempts=attempts+1,
  locked_until=NOW()+INTERVAL '60 seconds',updated_at=NOW()
  FROM candidate c WHERE w.delivery_id=c.delivery_id
- RETURNING w.delivery_id,w.event_type,w.payload,w.attempts`).Scan(&d.id, &d.event, &d.payload, &d.attempt)
+ RETURNING w.delivery_id,w.event_type,w.payload,w.attempts,w.failure_count`).Scan(&d.id, &d.event, &d.payload, &d.attempt, &d.failures)
 	return d, err
 }
 
@@ -134,23 +144,43 @@ func (s *webhookInbox) execute(d inboxDelivery) {
 	err := s.handle(ctx, d)
 	cancel()
 	state, lastError := "succeeded", ""
+	failureIncrement := 0
+	var delay time.Duration
 	if err != nil {
-		state, lastError = "failed", err.Error()
-		if s.ctx.Err() != nil {
-			state = "pending"
+		message := []rune(err.Error())
+		state, lastError = "pending", string(message[:min(len(message), 4096)])
+		if s.ctx.Err() == nil {
+			failureIncrement = 1
+			if d.failures+1 >= inboxMaxFailures {
+				state = "failed"
+			} else {
+				delay = inboxRetryDelay(d.failures + 1)
+			}
 		}
-		clog.FromContext(s.ctx).Warn("Webhook processing failed", "delivery_id", d.id, "event", d.event, "attempt", d.attempt, "error", err)
+		clog.FromContext(s.ctx).Warn("Webhook processing failed", "delivery_id", d.id, "event", d.event, "attempt", d.attempt, "state", state, "retry_delay", delay, "error", err)
 	}
 	// Use a separate bounded context to release a lease even during shutdown.
 	completeCtx, completeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer completeCancel()
 	_, completeErr := s.db.ExecContext(completeCtx, `UPDATE webhook_deliveries SET state=$3,last_error=$4,
+ failure_count=failure_count+$5,failure_total=failure_total+$5,
+ available_at=NOW()+($6 * INTERVAL '1 second'),
  locked_until=NULL,updated_at=NOW(),completed_at=CASE WHEN $3='succeeded' THEN NOW() ELSE NULL END,
  payload=CASE WHEN $3='succeeded' THEN NULL ELSE payload END
- WHERE delivery_id=$1 AND attempts=$2 AND state='processing'`, d.id, d.attempt, state, lastError)
+ WHERE delivery_id=$1 AND attempts=$2 AND state='processing'`, d.id, d.attempt, state, lastError, failureIncrement, delay.Seconds())
 	if completeErr != nil {
 		clog.FromContext(s.ctx).Error("Failed to complete webhook lease", "delivery_id", d.id, "error", completeErr)
 	}
+}
+
+const inboxMaxFailures = 8
+
+// Failure counts, unlike claims, exclude restart recovery and shutdown cancellation.
+func inboxRetryDelay(failures int) time.Duration {
+	if failures >= 7 {
+		return 5 * time.Minute
+	}
+	return 5 * time.Second * time.Duration(1<<max(failures-1, 0))
 }
 
 func (s *webhookInbox) handle(ctx context.Context, d inboxDelivery) (err error) {

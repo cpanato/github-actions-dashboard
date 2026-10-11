@@ -122,8 +122,10 @@ under the same ID returns 409. Missing IDs return 400, payloads above 10 MiB ret
 60-second leases and 30-second handler deadlines. Pending work and expired leases
 resume after restart. Processing is at least once, so handlers must be idempotent.
 Successful payloads are cleared, while IDs/hashes remain for deduplication; failed
-payloads and errors remain in the inbox for diagnosis. Automatic retry of handler
-failures is the next implementation step. Shutdown stops claims and finishes active
+payloads and errors remain in the inbox for diagnosis. Handler failures retry with
+persistent exponential backoff (5 seconds to 5 minutes), stopping after eight
+failures. Identical verified redelivery reopens an exhausted delivery; shutdown
+cancellation does not consume the failure budget. Shutdown stops claims and finishes active
 work before closing PostgreSQL; unfinished persisted work remains available to the
 next process. See [webhook operations](docs/WEBHOOKS.md). Cloud Run
 and other deployments must provision the database connection and secrets separately.

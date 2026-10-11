@@ -3,7 +3,7 @@
 The implementation currently provides:
 
 - GitHub App webhook ingestion for completed workflows and checks.
-- Durable PostgreSQL webhook inbox with delivery deduplication and leased restart recovery.
+- Durable PostgreSQL webhook inbox with deduplication, leased restart recovery, bounded retries and operator redelivery.
 - OAuth sign-in with an explicit user/organization allowlist for the entire shared dashboard.
 - PostgreSQL storage with automatic schema initialization and installation ownership.
 - Repository statistics, date-window analytics, daily trends and intermittent-check detection.
@@ -19,7 +19,7 @@ and [testing](docs/TESTING.md) for the test harness.
 
 ## Limits
 
-SQLite, history backfill, automatic webhook retries, per-user repository filtering,
+SQLite, history backfill, per-user repository filtering,
 shared session storage, workflow-duration analytics and stored workflow-job
 collection are not implemented. `cache.workflow_ttl` and
 `options.max_repos_per_page` remain accepted for compatibility but do not currently

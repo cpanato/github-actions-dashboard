@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -169,8 +170,10 @@ func TestPostgresInboxFailureAndStaleLease(t *testing.T) {
 	if attempts := waitDelivery(t, s, "failed", "processing"); attempts != 2 {
 		t.Fatalf("stale completion changed current lease: %d", attempts)
 	}
+	assertFailureCounts(t, s, "failed", 0, 0)
 	s.execute(second)
-	waitDelivery(t, s, "failed", "failed")
+	assertFailureCounts(t, s, "failed", 1, 1)
+	waitDelivery(t, s, "failed", "pending")
 	var retained []byte
 	var message string
 	if err := s.db.QueryRow(`SELECT payload,last_error FROM webhook_deliveries WHERE delivery_id='failed'`).Scan(&retained, &message); err != nil {
@@ -231,6 +234,7 @@ func TestPostgresInboxCancelledShutdownRequeuesActiveWork(t *testing.T) {
 		t.Fatalf("shutdown: %v", err)
 	}
 	waitDelivery(t, s, "interrupted", "pending")
+	assertFailureCounts(t, s, "interrupted", 0, 0)
 }
 
 func TestPostgresServerCloseFinishesInboxWrite(t *testing.T) {
@@ -269,5 +273,163 @@ func TestPostgresServerCloseFinishesInboxWrite(t *testing.T) {
 	}
 	if err := <-closed; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInboxRetryDelay(t *testing.T) {
+	for i, seconds := range []int{5, 10, 20, 40, 80, 160, 300, 300} {
+		if got := inboxRetryDelay(i + 1); got != time.Duration(seconds)*time.Second {
+			t.Fatalf("failure %d: delay=%s", i+1, got)
+		}
+	}
+	if inboxRetryDelay(1000) != 5*time.Minute {
+		t.Fatal("large failure count must stay capped")
+	}
+}
+
+func TestPostgresInboxRetriesAndRedelivery(t *testing.T) {
+	fail := true
+	s := testInbox(t, 0, inboxTestHandler(func(context.Context, string, []byte) error {
+		if fail {
+			return errors.New("transient")
+		}
+		return nil
+	}))
+	dispatch := githubapp.Dispatch{EventType: "workflow_run", DeliveryID: "retry", Payload: []byte("{}")}
+	if err := s.Schedule(t.Context(), dispatch); err != nil {
+		t.Fatal(err)
+	}
+	for failure := 1; failure <= inboxMaxFailures; failure++ {
+		d, err := s.claim(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.execute(d)
+		want := "pending"
+		if failure == inboxMaxFailures {
+			want = "failed"
+		}
+		waitDelivery(t, s, dispatch.DeliveryID, want)
+		var count, total int
+		var delayed bool
+		if err := s.db.QueryRow(`SELECT failure_count,failure_total,available_at>NOW() FROM webhook_deliveries WHERE delivery_id='retry'`).Scan(&count, &total, &delayed); err != nil {
+			t.Fatal(err)
+		}
+		if count != failure || total != failure || (want == "pending" && !delayed) {
+			t.Fatalf("failure %d: count=%d total=%d delayed=%v", failure, count, total, delayed)
+		}
+		// A new scheduler instance must honor the persisted retry deadline.
+		next := newWebhookInbox(s.db, nil, 0, func() bool { return true })
+		_, err = next.claim(t.Context())
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("claimed unavailable retry: %v", err)
+		}
+		if err := next.Close(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if failure < inboxMaxFailures {
+			if err := s.Schedule(t.Context(), dispatch); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.claim(t.Context()); !errors.Is(err, sql.ErrNoRows) {
+				t.Fatalf("duplicate bypassed backoff: %v", err)
+			}
+			if _, err := s.db.Exec(`UPDATE webhook_deliveries SET available_at=NOW() WHERE delivery_id='retry'`); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	conflict := dispatch
+	conflict.Payload = []byte("changed")
+	if err := s.Schedule(t.Context(), conflict); !errors.Is(err, errDeliveryConflict) {
+		t.Fatalf("conflict: %v", err)
+	}
+	waitDelivery(t, s, "retry", "failed")
+	if err := s.Schedule(t.Context(), dispatch); err != nil {
+		t.Fatal(err)
+	}
+	waitDelivery(t, s, "retry", "pending")
+	d, err := s.claim(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.failures != 0 {
+		t.Fatalf("redelivery budget=%d", d.failures)
+	}
+	fail = false
+	s.execute(d)
+	waitDelivery(t, s, "retry", "succeeded")
+	var count, total, attempts int
+	var payload []byte
+	var message string
+	if err := s.db.QueryRow(`SELECT failure_count,failure_total,attempts,payload,last_error FROM webhook_deliveries WHERE delivery_id='retry'`).Scan(&count, &total, &attempts, &payload, &message); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 || total != 8 || attempts != 9 || payload != nil || message != "" {
+		t.Fatalf("redelivery result: count=%d total=%d attempts=%d payload=%q error=%q", count, total, attempts, payload, message)
+	}
+}
+
+func TestPostgresInboxTransientFailureRecovers(t *testing.T) {
+	calls := 0
+	s := testInbox(t, 0, inboxTestHandler(func(context.Context, string, []byte) error {
+		calls++
+		if calls == 1 {
+			panic("transient panic")
+		}
+		return nil
+	}))
+	if err := s.Schedule(t.Context(), githubapp.Dispatch{EventType: "workflow_run", DeliveryID: "recover", Payload: []byte("{}")}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.claim(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.execute(d)
+	waitDelivery(t, s, "recover", "pending")
+	if _, err := s.db.Exec(`UPDATE webhook_deliveries SET available_at=NOW() WHERE delivery_id='recover'`); err != nil {
+		t.Fatal(err)
+	}
+	d, err = s.claim(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.execute(d)
+	if attempts := waitDelivery(t, s, "recover", "succeeded"); attempts != 2 {
+		t.Fatalf("attempts=%d", attempts)
+	}
+}
+
+func assertFailureCounts(t *testing.T, s *webhookInbox, id string, wantCount, wantTotal int) {
+	t.Helper()
+	var count, total int
+	if err := s.db.QueryRow(`SELECT failure_count,failure_total FROM webhook_deliveries WHERE delivery_id=$1`, id).Scan(&count, &total); err != nil {
+		t.Fatal(err)
+	}
+	if count != wantCount || total != wantTotal {
+		t.Fatalf("%s failures=%d total=%d, want %d %d", id, count, total, wantCount, wantTotal)
+	}
+}
+
+func TestPostgresInboxSchemaUpgradePreservesFailures(t *testing.T) {
+	s := testInbox(t, 0, inboxTestHandler(func(context.Context, string, []byte) error { return nil }))
+	if err := s.Schedule(t.Context(), githubapp.Dispatch{EventType: "workflow_run", DeliveryID: "legacy", Payload: []byte("{}")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE webhook_deliveries DROP COLUMN failure_count, DROP COLUMN failure_total; UPDATE webhook_deliveries SET state='failed',last_error='legacy error' WHERE delivery_id='legacy'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := initializeDatabase(t.Context(), s.db); err != nil {
+		t.Fatal(err)
+	}
+	waitDelivery(t, s, "legacy", "failed")
+	assertFailureCounts(t, s, "legacy", 0, 0)
+	var payload []byte
+	if err := s.db.QueryRow(`SELECT payload FROM webhook_deliveries WHERE delivery_id='legacy'`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != "{}" {
+		t.Fatal("schema upgrade lost failed payload")
 	}
 }
