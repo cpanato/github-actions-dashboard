@@ -144,12 +144,16 @@ func TestPostgresSignedWebhookAndWebSocket(t *testing.T) {
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	var message struct{ Type string }
-	if err := conn.ReadJSON(&message); err != nil {
-		t.Fatal(err)
-	}
-	if message.Type != "workflow_update" {
-		t.Fatalf("message=%+v", message)
+	// Each accepted delivery broadcasts after its database transaction commits.
+	// Wait for both deliveries before checking idempotence and dropping the schema.
+	for range 2 {
+		var message struct{ Type string }
+		if err := conn.ReadJSON(&message); err != nil {
+			t.Fatal(err)
+		}
+		if message.Type != "workflow_update" {
+			t.Fatalf("message=%+v", message)
+		}
 	}
 	var count int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM workflow_runs WHERE id=456`).Scan(&count); err != nil {
