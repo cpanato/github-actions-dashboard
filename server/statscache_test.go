@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+var errNone error
+
 func TestCachedStatsSharesConcurrentLoads(t *testing.T) {
 	c := newStatsCache(context.Background(), time.Minute, 10)
 	var calls atomic.Int32
@@ -20,7 +22,7 @@ func TestCachedStatsSharesConcurrentLoads(t *testing.T) {
 	load := func(context.Context) (int, error) {
 		calls.Add(1)
 		<-release
-		return 42, nil
+		return 42, errNone
 	}
 
 	var wg sync.WaitGroup
@@ -99,8 +101,11 @@ func TestCachedStatsDisabled(t *testing.T) {
 	load := func(context.Context) (int, error) { calls++; return calls, nil }
 	for _, c := range []*statsCache{nil, newStatsCache(context.Background(), 0, 10)} {
 		calls = 0
-		cachedStats(context.Background(), c, "k", load)
-		cachedStats(context.Background(), c, "k", load)
+		for i := 0; i < 2; i++ {
+			if _, err := cachedStats(context.Background(), c, "k", load); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if calls != 2 {
 			t.Fatalf("disabled cache made %d loads, want 2", calls)
 		}
