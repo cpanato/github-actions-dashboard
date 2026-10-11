@@ -30,7 +30,12 @@ sessions:
 # GitHub App configuration
 # These should be set via environment variables:
 # export DASHBOARD_GITHUB_APP_INTEGRATION_ID=your-app-id
-# export DASHBOARD_GITHUB_APP_PRIVATE_KEY=/path/to/private-key.pem
+# Private key must contain the PEM contents, not a filename.
+# export DASHBOARD_GITHUB_APP_PRIVATE_KEY="$(cat /path/to/private-key.pem)"
 # export DASHBOARD_GITHUB_APP_WEBHOOK_SECRET=your-webhook-secret
 # export DASHBOARD_GITHUB_OAUTH_CLIENT_ID=your-oauth-client-id
 # export DASHBOARD_GITHUB_OAUTH_CLIENT_SECRET=your-oauth-client-secret
+
+# Required shared-dashboard access policy (choose users, organizations or both):
+# export DASHBOARD_ALLOWED_USERS=your-github-login
+# export DASHBOARD_ALLOWED_ORGANIZATIONS=your-org

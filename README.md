@@ -1,29 +1,38 @@
 # GitHub Actions Dashboard
 
-Monitor workflow health across repositories installed in a GitHub App. The dashboard includes aggregate analytics, flaky check detection, and a workflow-by-commit matrix with filters for workflow, branch, and event.
-
-## Screenshots
+Monitor GitHub Actions across repositories installed in a GitHub App. The shared
+dashboard provides repository statistics, workflow history, intermittently failing
+checks and a workflow-by-commit matrix with branch, workflow and event filters.
 
 ![Dashboard overview](assets/home.png)
-
 ![Repository workflow matrix](assets/dashboard.png)
 
-## Local Demo
+## Local demo
 
-Requires Go 1.27.2 and Docker Compose.
+Requires Go 1.27.2 and Docker Compose. Frontend assets are checked in, so running
+the app does not require Node or a CDN connection.
 
 ```bash
-docker compose up -d postgres
+docker compose up -d --wait postgres
 go run . -config config/demo.yml
 ```
 
-Open [http://127.0.0.1:8080](http://127.0.0.1:8080). The demo seeds synthetic repositories, workflow runs, and check runs into PostgreSQL. Demo mode disables OAuth only for this profile and refuses non-loopback binds or a configured public URL. Do not use demo mode for a deployed instance.
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080). The demo seeds synthetic data
+into PostgreSQL and disables OAuth. It refuses non-loopback binds and a configured
+public URL. Use it only locally. Seeding is idempotent; restarting updates the
+synthetic timestamps without duplicating rows.
 
-The demo database is persistent in a Docker volume. Stop the app with `Ctrl+C`; stop PostgreSQL with `docker compose down` (the volume is retained).
+Stop the app with Ctrl+C and PostgreSQL with `docker compose down`. The database
+volume is retained. `scripts/dev-setup.sh demo` starts the database and builds a
+binary, then prints the command to run it. `scripts/dev-setup.sh oauth` selects
+`config/local.dev.yml` instead.
 
-## GitHub App Configuration
+## Real GitHub data
 
-For real GitHub data, configure `config/local.dev.yml` or `config/production.yml` and set the GitHub App credentials:
+Configure a GitHub App with Actions, Checks and Metadata read permissions and
+subscribe to `workflow_run`, `check_run`, `installation` and
+`installation_repositories`. Set the webhook URL to `/api/github/hook` and the
+OAuth callback to `/login/callback` on the externally reachable dashboard URL.
 
 ```bash
 export DASHBOARD_GITHUB_APP_INTEGRATION_ID=123456
@@ -31,61 +40,109 @@ export DASHBOARD_GITHUB_APP_PRIVATE_KEY="$(cat private-key.pem)"
 export DASHBOARD_GITHUB_APP_WEBHOOK_SECRET=your-webhook-secret
 export DASHBOARD_GITHUB_OAUTH_CLIENT_ID=your-client-id
 export DASHBOARD_GITHUB_OAUTH_CLIENT_SECRET=your-client-secret
+export DASHBOARD_ALLOWED_USERS=your-github-login
+# Alternatively/additionally: DASHBOARD_ALLOWED_ORGANIZATIONS=your-org
+export DASHBOARD_PUBLIC_URL=https://your-dashboard.example
+
+go run . -config config/local.dev.yml
 ```
 
-The app receives `workflow_run`, `check_run`, `installation`, and `installation_repositories` webhook events at `/api/github/hook`. User-facing dashboard routes are protected by GitHub OAuth. See [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) for the authentication flow.
+Private-key configuration is PEM **contents**, not a filename. An explicit user
+or organization allowlist is required outside demo mode. Allowed users can see
+**every tracked repository, aggregate and realtime message**; there is no per-user
+repository isolation. Organization membership is verified at login and remains
+valid for the session lifetime. See [authentication](docs/AUTHENTICATION.md) for
+permissions, cookies, access checks and session-store limits.
 
-Production configuration supports Cloud SQL PostgreSQL through `DASHBOARD_DATABASE_CLOUD_SQL_INSTANCE`, `DASHBOARD_DATABASE_NAME`, `DASHBOARD_DATABASE_USER`, and `DASHBOARD_DATABASE_PASSWORD`.
+History is ingested from future webhooks; there is no initial workflow-history
+backfill. Only completed workflow and check events are persisted. Repository
+removal and app uninstall delete tracked data, including dependent runs/checks.
+Installation tombstones prevent delayed completed events from recreating removed
+data. Existing rows gain installation ownership on subsequent webhooks; uninstall
+cannot identify historical rows that still lack an installation ID.
 
-## Routes
+## Configuration and deployment
 
-- `GET /` - Repository overview and analytics
-- `GET /repository/{owner}/{repo}` - Repository workflow matrix
-- `GET /api/repositories` - Tracked repositories
-- `GET /api/workflows` - Workflow runs
-- `GET /api/analytics` - Run summary
-- `GET /api/flaky-tests` - Intermittently failing checks
-- `GET /api/trends` - Run trends
-- `GET /api/health` - Database health
-- `POST /api/github/hook` - GitHub App webhook receiver
+Use `config/dashboard.example.yml` as a reference, `config/local.dev.yml` for local
+OAuth testing or `config/production.yml` for deployment. PostgreSQL is the only
+implemented database driver. The schema is initialized automatically, including
+additive installation-tracking migrations. Back up existing databases before
+upgrading a deployed instance.
 
-## Development
+Relevant environment values:
 
-- `make test` runs tests with the race detector.
-- `make lint` runs golangci-lint.
-- `make verify` checks modules, vulnerabilities, and `go vet`.
-- `make ko-local` builds a local container image with ko.
+| Variable | Purpose |
+| --- | --- |
+| `DASHBOARD_PUBLIC_URL` | Externally reachable URL for OAuth callbacks |
+| `DASHBOARD_ALLOWED_USERS` | Comma-separated usernames allowed to view the shared dashboard |
+| `DASHBOARD_ALLOWED_ORGANIZATIONS` | Comma-separated organizations whose active members may sign in |
+| `DASHBOARD_DATABASE_URL` | PostgreSQL URL or lib/pq connection string |
+| `DASHBOARD_DATABASE_CLOUD_SQL_INSTANCE` | Cloud SQL instance connection name |
+| `DASHBOARD_DATABASE_NAME`, `DASHBOARD_DATABASE_USER`, `DASHBOARD_DATABASE_PASSWORD` | Cloud SQL database credentials |
+| `DASHBOARD_ENV_PREFIX` | Replaces `DASHBOARD_` for supported credential/database/access/public-URL variables |
 
-CI runs these checks on pull requests and pushes to `main`. Releases use GoReleaser and include an SBOM and cosign image signature.
+A database URL takes precedence over automatic Cloud SQL connection-string
+construction. Cloud SQL uses `/cloudsql/<instance>` Unix sockets, which must be
+provided by the deployment environment.
+
+`options.default_time_window` must be a positive Go duration, such as `24h` or
+`168h` (seven days); `7d` is invalid. `options.enable_realtime: false` disables the
+WebSocket endpoint and browser connection. Database-backed routes return 503 until
+schema initialization succeeds; background retries share the stable pool used by
+webhook handlers. Shutdown cancels retries and closes realtime connections.
+
+Use HTTPS and secure cookies in production. Sessions are held in memory, so
+restarts invalidate them; multiple replicas need shared session storage or routing
+affinity. Webhook processing uses an in-memory asynchronous queue: acknowledgement
+does not guarantee durable persistence, and failures require redelivery. Cloud Run
+and other deployments must provision the database connection and secrets separately.
+`make ko-local` builds a local image; the repository does not provide a deploy target.
+
+## Pages and APIs
+
+Dashboard pages and data APIs require an authorized session outside demo mode.
+API requests return JSON; `HX-Request: true` returns HTML partials for repositories,
+workflows, analytics and flaky checks. Trends always returns JSON.
+
+| Route | Parameters / behavior |
+| --- | --- |
+| `/` | Repository overview, analytics and recent workflow runs |
+| `/repository/{owner}/{repo}` | `workflow`, `branch`, `event`, `view=grid\|cards`, `limit` (commit columns; default 50, maximum 500) |
+| `/api/repositories` | All tracked repositories with all-time statistics |
+| `/api/workflows` | `repository_id`, `status`, `conclusion`, `since` (relative Go duration), `limit` (default 50; 0 is unbounded) |
+| `/api/analytics` | `repository_id`, `days` (default 30) |
+| `/api/flaky-tests` | `repository_id`, `days` (default 30), `min_runs` (default 5); top 20 results |
+| `/api/trends` | `repository_id`, `days` (default 30); daily aggregates |
+| `/api/health` | Public database readiness check, 200 or 503 |
+| `/api/github/hook` | Public POST receiver; verifies GitHub webhook signatures |
+| `/ws` | Authorized realtime connection when enabled |
+
+Omitting `repository_id` aggregates across all tracked repositories. Repository
+statistics are all-time; analytics and trends use the requested date window.
+Success rate is successful completed runs divided by completed runs with an
+outcome, excluding skipped, cancelled, neutral and empty outcomes. Total runs also
+includes unfinished runs. Flake rate is failed checks divided by successful plus
+failed checks, expressed as a percentage. Results require both success and failure;
+`last_failure` is the latest failing completion, not the latest successful check.
+This is a check-level intermittency heuristic, not proof that individual tests flake.
+
+## Development and testing
+
+- `make test`: Go tests with the race detector; database cases skip without a test URL.
+- `make test-integration`: PostgreSQL cases plus Go tests; requires a dedicated test database.
+- `npm ci && make test-js`: frontend regressions, requiring Node 20 or newer.
+- `make test-e2e`: Chromium against an isolated loopback demo; install Chromium first.
+- `make assets`: regenerate checked-in HTMX and Tailwind assets from locked dependencies.
+- `make lint`: golangci-lint.
+- `make verify`: module verification, tidy check, vet and reachable vulnerability checks.
+
+See [testing](docs/TESTING.md) for disposable-database setup, browser installation
+and failure artifacts. CI runs Go, database, frontend and browser tests, checks
+asset reproducibility and builds the ko image. Releases use GoReleaser, SBOMs and
+cosign image signatures. See the [improvement plan](docs/IMPROVEMENT_PLAN.md) for
+review order and remaining project boundaries.
 
 ## License
 
-Apache License 2.0
-
-Configuration uses positive Go durations such as `24h` or `168h` (seven days).
-An explicit `options.enable_realtime: false` disables the WebSocket endpoint.
-Database-backed routes return HTTP 503 until schema initialization succeeds;
-the server retries initialization using the same pool shared by webhook handlers.
-Shutdown cancels initialization retries and closes realtime connections.
-
-The dashboard renders server-generated HTML partials for HTMX requests. Realtime
-updates preserve active workflow filters and refresh repository, check and
-installation changes. Summary cards use the returned flaky-check count and the
-actual seven-day aggregate success rate. Run frontend regression tests with
-`node --test tests/dashboard.test.cjs` (Node 20 or newer).
-
-Success rate is successful completed runs divided by completed runs with an
-outcome, excluding skipped, cancelled, neutral and empty outcomes. Total runs
-also includes unfinished runs. Flake rate is failures divided by successful plus
-failed completed checks, expressed as a percentage; `last_failure` refers only
-to failing checks. Database regression tests run when
-`DASHBOARD_TEST_DATABASE_URL` points to a loopback database whose name ends in
-`_test`; each test creates and removes its own schema.
-
-Repository removal and App uninstall delete tracked repositories and cascade to
-stored runs, jobs and checks. Installation/access tombstones prevent delayed run
-events from recreating removed data; repository-added events restore access.
-Lifecycle changes and event persistence are transactional and duplicate deliveries
-are idempotent. Older run/check updates cannot overwrite newer completion data.
-Existing rows gain installation ownership on a subsequent webhook; uninstall
-cannot identify legacy rows that have never received an installation ID.
+Apache License 2.0. The vendored HTMX script retains its MIT license alongside the
+asset; compiled Tailwind CSS retains its upstream license header.
