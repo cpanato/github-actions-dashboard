@@ -49,9 +49,10 @@ func GetAnalytics(ctx context.Context, db *sql.DB, repositoryID int64, days int)
 		query = `
 			SELECT
 				COUNT(*) as total_runs,
-				COALESCE(SUM(CASE WHEN conclusion = 'success' THEN 1 ELSE 0 END), 0) as successful_runs,
+				COALESCE(SUM(CASE WHEN status = 'completed' AND conclusion = 'success' THEN 1 ELSE 0 END), 0) as successful_runs,
 				COALESCE(SUM(CASE WHEN conclusion = 'skipped' THEN 1 ELSE 0 END), 0) as skipped_runs,
-				COALESCE(SUM(CASE WHEN conclusion = 'cancelled' THEN 1 ELSE 0 END), 0) as cancelled_runs
+				COALESCE(SUM(CASE WHEN conclusion = 'cancelled' THEN 1 ELSE 0 END), 0) as cancelled_runs,
+ COALESCE(SUM(CASE WHEN status = 'completed' AND conclusion NOT IN ('skipped', 'cancelled', 'neutral', '') THEN 1 ELSE 0 END), 0) as eligible_runs
 			FROM workflow_runs
 			WHERE repository_id = $1 AND created_at >= $2
 		`
@@ -60,23 +61,24 @@ func GetAnalytics(ctx context.Context, db *sql.DB, repositoryID int64, days int)
 		query = `
 			SELECT
 				COUNT(*) as total_runs,
-				COALESCE(SUM(CASE WHEN conclusion = 'success' THEN 1 ELSE 0 END), 0) as successful_runs,
+				COALESCE(SUM(CASE WHEN status = 'completed' AND conclusion = 'success' THEN 1 ELSE 0 END), 0) as successful_runs,
 				COALESCE(SUM(CASE WHEN conclusion = 'skipped' THEN 1 ELSE 0 END), 0) as skipped_runs,
-				COALESCE(SUM(CASE WHEN conclusion = 'cancelled' THEN 1 ELSE 0 END), 0) as cancelled_runs
+				COALESCE(SUM(CASE WHEN conclusion = 'cancelled' THEN 1 ELSE 0 END), 0) as cancelled_runs,
+ COALESCE(SUM(CASE WHEN status = 'completed' AND conclusion NOT IN ('skipped', 'cancelled', 'neutral', '') THEN 1 ELSE 0 END), 0) as eligible_runs
 			FROM workflow_runs
 			WHERE created_at >= $1
 		`
 		args = []interface{}{since}
 	}
 
-	var totalRuns, successfulRuns, skippedRuns, cancelledRuns int
-	err := db.QueryRowContext(ctx, query, args...).Scan(&totalRuns, &successfulRuns, &skippedRuns, &cancelledRuns)
+	var totalRuns, successfulRuns, skippedRuns, cancelledRuns, eligibleRuns int
+	err := db.QueryRowContext(ctx, query, args...).Scan(&totalRuns, &successfulRuns, &skippedRuns, &cancelledRuns, &eligibleRuns)
 	if err != nil {
 		return nil, err
 	}
 
 	// Calculate success rate excluding skipped and cancelled
-	activeRuns := totalRuns - skippedRuns - cancelledRuns
+	activeRuns := eligibleRuns
 	successRate := 0.0
 	if activeRuns > 0 {
 		successRate = float64(successfulRuns) / float64(activeRuns) * 100
@@ -101,10 +103,11 @@ func GetFlakyTests(ctx context.Context, db *sql.DB, repositoryID int64, minRuns 
 			r.full_name,
 			COUNT(*) as total_runs,
 			SUM(CASE WHEN cr.conclusion = 'failure' THEN 1 ELSE 0 END) as failure_count,
-			MAX(cr.completed_at) as last_failure
+			MAX(cr.completed_at) FILTER (WHERE cr.conclusion = 'failure') as last_failure
 		FROM check_runs cr
 		JOIN repositories r ON cr.repository_id = r.id
 		WHERE cr.completed_at >= $1
+ AND cr.conclusion IN ('success', 'failure')
 		  AND ($2::BIGINT = 0 OR cr.repository_id = $2)
 	`
 
@@ -147,9 +150,10 @@ func GetTrendData(ctx context.Context, db *sql.DB, repositoryID int64, days int)
 		SELECT
 			DATE(created_at) as date,
 			COUNT(*) as total_runs,
-			COALESCE(SUM(CASE WHEN conclusion = 'success' THEN 1 ELSE 0 END), 0) as successful_runs,
+			COALESCE(SUM(CASE WHEN status = 'completed' AND conclusion = 'success' THEN 1 ELSE 0 END), 0) as successful_runs,
 			COALESCE(SUM(CASE WHEN conclusion = 'skipped' THEN 1 ELSE 0 END), 0) as skipped_runs,
-			COALESCE(SUM(CASE WHEN conclusion = 'cancelled' THEN 1 ELSE 0 END), 0) as cancelled_runs
+			COALESCE(SUM(CASE WHEN conclusion = 'cancelled' THEN 1 ELSE 0 END), 0) as cancelled_runs,
+ COALESCE(SUM(CASE WHEN status = 'completed' AND conclusion NOT IN ('skipped', 'cancelled', 'neutral', '') THEN 1 ELSE 0 END), 0) as eligible_runs
 		FROM workflow_runs
 		WHERE created_at >= $1
 	`
@@ -175,12 +179,12 @@ func GetTrendData(ctx context.Context, db *sql.DB, repositoryID int64, days int)
 	var trends []TrendPoint
 	for rows.Next() {
 		var tp TrendPoint
-		var successfulRuns, skippedRuns, cancelledRuns int
-		err = rows.Scan(&tp.Date, &tp.TotalRuns, &successfulRuns, &skippedRuns, &cancelledRuns)
+		var successfulRuns, skippedRuns, cancelledRuns, eligibleRuns int
+		err = rows.Scan(&tp.Date, &tp.TotalRuns, &successfulRuns, &skippedRuns, &cancelledRuns, &eligibleRuns)
 		if err != nil {
 			return nil, err
 		}
-		activeRuns := tp.TotalRuns - skippedRuns - cancelledRuns
+		activeRuns := eligibleRuns
 		if activeRuns > 0 {
 			tp.SuccessRate = float64(successfulRuns) / float64(activeRuns) * 100
 		}

@@ -62,10 +62,11 @@ func GetRepositories(ctx context.Context, db *sql.DB, withStats bool) ([]Reposit
 	if withStats {
 		query += `,
 			COUNT(wr.id) as total_runs,
-			SUM(CASE WHEN wr.conclusion = 'success' THEN 1 ELSE 0 END) as successful_runs,
+			SUM(CASE WHEN wr.status = 'completed' AND wr.conclusion = 'success' THEN 1 ELSE 0 END) as successful_runs,
 			SUM(CASE WHEN wr.conclusion = 'failure' THEN 1 ELSE 0 END) as failed_runs,
 			SUM(CASE WHEN wr.conclusion = 'skipped' THEN 1 ELSE 0 END) as skipped_runs,
-			SUM(CASE WHEN wr.conclusion = 'cancelled' THEN 1 ELSE 0 END) as cancelled_runs
+			SUM(CASE WHEN wr.conclusion = 'cancelled' THEN 1 ELSE 0 END) as cancelled_runs,
+ SUM(CASE WHEN wr.status = 'completed' AND wr.conclusion NOT IN ('skipped', 'cancelled', 'neutral', '') THEN 1 ELSE 0 END) as eligible_runs
 		`
 	}
 
@@ -90,15 +91,16 @@ func GetRepositories(ctx context.Context, db *sql.DB, withStats bool) ([]Reposit
 	var repos []Repository
 	for rows.Next() {
 		var repo Repository
+		var eligibleRuns int
 
 		if withStats {
 			err = rows.Scan(
 				&repo.ID, &repo.Owner, &repo.Name, &repo.FullName, &repo.DefaultBranch,
 				&repo.CreatedAt, &repo.UpdatedAt,
-				&repo.TotalRuns, &repo.SuccessfulRuns, &repo.FailedRuns, &repo.SkippedRuns, &repo.CancelledRuns,
+				&repo.TotalRuns, &repo.SuccessfulRuns, &repo.FailedRuns, &repo.SkippedRuns, &repo.CancelledRuns, &eligibleRuns,
 			)
 			// Calculate success rate excluding skipped and cancelled
-			activeRuns := repo.TotalRuns - repo.SkippedRuns - repo.CancelledRuns
+			activeRuns := eligibleRuns
 			if activeRuns > 0 {
 				repo.SuccessRate = float64(repo.SuccessfulRuns) / float64(activeRuns) * 100
 			}

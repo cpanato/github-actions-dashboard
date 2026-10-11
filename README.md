@@ -73,3 +73,11 @@ updates preserve active workflow filters and refresh repository, check and
 installation changes. Summary cards use the returned flaky-check count and the
 actual seven-day aggregate success rate. Run frontend regression tests with
 `node --test tests/dashboard.test.cjs` (Node 20 or newer).
+
+Success rate is successful completed runs divided by completed runs with an
+outcome, excluding skipped, cancelled, neutral and empty outcomes. Total runs
+also includes unfinished runs. Flake rate is failures divided by successful plus
+failed completed checks, expressed as a percentage; `last_failure` refers only
+to failing checks. Database regression tests run when
+`DASHBOARD_TEST_DATABASE_URL` points to a loopback database whose name ends in
+`_test`; each test creates and removes its own schema.
