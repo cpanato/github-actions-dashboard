@@ -71,3 +71,11 @@ Use the same externally reachable public URL for the OAuth callback.
 
 `config/demo.yml` skips OAuth and allowlists, seeds synthetic data and refuses
 non-loopback binds or a public URL. It is intended for local demos and E2E tests.
+
+## Realtime session expiry
+
+An authenticated WebSocket closes at the session's absolute expiry, even if the
+browser continues responding to heartbeat pings. Reconnecting requires a valid
+session and uses the normal login/access checks. Local demo sockets have no
+session deadline. Organization membership is still checked at login, so removal
+from an allowed organization does not immediately revoke an existing session.
