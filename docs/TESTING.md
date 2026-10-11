@@ -36,7 +36,11 @@ make test-e2e
 ```
 
 The harness builds a temporary application binary, creates its own random
-PostgreSQL schema and starts a demo instance at `127.0.0.1:18080`. It refuses to
+PostgreSQL schema and starts a realtime demo at `127.0.0.1:18080` and a separate
+realtime-disabled demo at `127.0.0.1:18082`. Each has an isolated schema. A TCP
+proxy lets the outage test disconnect the application's database traffic while
+leaving PostgreSQL itself and the cleanup connection running. The test control
+listeners bind only to loopback ports 18081 and 18083. It refuses to
 reuse an existing server. It removes external DASHBOARD_* credentials from the
 child process, seeds synthetic data, and removes its schema and temporary files
 when stopped. Stop the test database with `docker stop dashboard-tests`.
@@ -44,6 +48,12 @@ when stopped. Stop the test database with `docker stop dashboard-tests`.
 Chromium tests assert error-free page execution, accurate summary cards,
 repository navigation, combined/empty filters, grid/card state, signed workflow
 updates preserving filters and check-completion bursts refreshing flaky data.
+Additional scenarios cover WebSocket reconnection with preserved filters,
+repository removal, failed database requests retaining previously rendered data,
+recovery after database connectivity returns, and realtime disabled without a
+browser socket. Expected HTTP 500/503 responses occur during the outage scenario;
+JavaScript execution errors still fail the test.
+
 OAuth itself is covered by local API tests, not by browser login to GitHub.
 
 CI runs the database tests and browser suite on every PR and push to main.
