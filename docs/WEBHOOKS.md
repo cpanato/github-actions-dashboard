@@ -32,7 +32,8 @@ processing and successful duplicates keep their existing state. Cumulative
 the current retry cycle. Existing failed rows from the earlier inbox implementation
 can also be redelivered; the additive schema upgrade does not requeue them.
 
-Processing metrics follow in a separate PR. There is no automatic retention cleanup yet. Include this table in
+The authenticated [`/api/webhooks/metrics` endpoint](WEBHOOK_METRICS.md) reports
+inbox state and processing totals. There is no automatic retention cleanup yet. Include this table in
 database backup/restore and storage planning.
 
 Shutdown rejects new scheduling, stops claiming pending work and waits for active

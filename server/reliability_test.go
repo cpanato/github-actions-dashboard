@@ -39,7 +39,7 @@ func TestConfigRealtimeAndWindow(t *testing.T) {
 
 func TestUnavailableDatabaseResponses(t *testing.T) {
 	s := &Server{}
-	for _, h := range []http.HandlerFunc{s.handleHealth, s.handleRepositories, s.handleWorkflows, s.handleAnalytics, s.handleFlakyTests, s.handleTrends, s.handleRepositoryDetail} {
+	for _, h := range []http.HandlerFunc{s.handleHealth, s.handleRepositories, s.handleWorkflows, s.handleAnalytics, s.handleFlakyTests, s.handleTrends, s.handleWebhookMetrics, s.handleRepositoryDetail} {
 		w := httptest.NewRecorder()
 		h(w, httptest.NewRequest(http.MethodGet, "/", nil))
 		if w.Code != http.StatusServiceUnavailable {

@@ -356,6 +356,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/analytics", requireAuth(http.HandlerFunc(s.handleAnalytics)))
 	mux.Handle("/api/flaky-tests", requireAuth(http.HandlerFunc(s.handleFlakyTests)))
 	mux.Handle("/api/trends", requireAuth(http.HandlerFunc(s.handleTrends)))
+	mux.Handle("/api/webhooks/metrics", requireAuth(http.HandlerFunc(s.handleWebhookMetrics)))
 	mux.Handle("/repository/", requireAuth(http.HandlerFunc(s.handleRepositoryDetail)))
 
 	// Root handler MUST be last (catch-all)

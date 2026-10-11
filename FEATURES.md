@@ -4,6 +4,7 @@ The implementation currently provides:
 
 - GitHub App webhook ingestion for completed workflows and checks.
 - Durable PostgreSQL webhook inbox with deduplication, leased restart recovery, bounded retries and operator redelivery.
+- Authenticated webhook processing metrics for queue counts, failures, expired leases and pending age.
 - OAuth sign-in with an explicit user/organization allowlist for the entire shared dashboard.
 - PostgreSQL storage with automatic schema initialization and installation ownership.
 - Repository statistics, date-window analytics, daily trends and intermittent-check detection.
