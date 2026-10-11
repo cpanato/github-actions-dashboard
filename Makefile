@@ -1,7 +1,21 @@
-.PHONY: test lint verify ko-local
+.PHONY: test test-js test-integration test-e2e assets lint verify ko-local
 
 test:
 	go test -race -count=1 ./...
+
+test-js:
+	npm test
+
+test-integration:
+	@test -n "$(DASHBOARD_TEST_DATABASE_URL)" || (echo "Set DASHBOARD_TEST_DATABASE_URL to a loopback PostgreSQL database ending in _test"; exit 1)
+	go test -race -count=1 ./...
+
+test-e2e:
+	npm run test:e2e
+
+assets:
+	npm ci
+	npm run build:assets
 
 lint:
 	golangci-lint run

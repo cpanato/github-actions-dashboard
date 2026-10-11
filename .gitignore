@@ -12,3 +12,7 @@ iac/*/.terraform/*
 iac/*/.terraform.lock.hcl
 iac/gcp/*
 /kodata/.DS_Store
+
+/node_modules/
+/playwright-report/
+/test-results/

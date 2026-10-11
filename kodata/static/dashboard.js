@@ -28,12 +28,12 @@ function updateWorkflowFilters() {
  if (limit) params.set('limit', limit);
  const url = '/api/workflows?' + params.toString();
  document.getElementById('workflows-container').setAttribute('hx-get', url);
- return htmx.ajax('GET', url, {target: '#workflows-container', swap: 'innerHTML'});
+ return htmx.ajax('GET', url, {source: document.getElementById('workflows-container'), target: '#workflows-container', swap: 'innerHTML'});
 }
 
 function refreshDashboard() {
  for (const selector of ['#repositories-container', '#analytics-stats', '#flaky-tests-container']) {
-  htmx.trigger(selector, 'load');
+  htmx.trigger(selector, 'refresh');
  }
  updateWorkflowFilters();
 }
