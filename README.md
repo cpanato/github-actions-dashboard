@@ -23,7 +23,13 @@ public URL. Use it only locally. Seeding is idempotent; restarting updates the
 synthetic timestamps without duplicating rows.
 
 Stop the app with Ctrl+C and PostgreSQL with `docker compose down`. The database
-volume is retained. `scripts/dev-setup.sh demo` starts the database and builds a
+volume is retained. PostgreSQL is published only on `127.0.0.1:5432`; newly
+initialized volumes require the configured `local-dev-password` for TCP access.
+Existing volumes retain their `pg_hba.conf` authentication rules. If an older
+volume used `trust`, change its TCP host rules to `scram-sha-256` and reload
+PostgreSQL; removing the Compose setting does not update existing database files.
+
+`scripts/dev-setup.sh demo` starts the database and builds a
 binary, then prints the command to run it. `scripts/dev-setup.sh oauth` selects
 `config/local.dev.yml` instead.
 
