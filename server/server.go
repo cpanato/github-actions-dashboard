@@ -292,7 +292,13 @@ func (s *Server) Handler() http.Handler {
 
 	// WebSocket endpoint (protected)
 	if s.config.Options.EnableRealtime && s.wsHub != nil {
-		wsHandler := requireAuth(http.HandlerFunc(s.wsHub.ServeWS))
+		wsHandler := requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var expiresAt time.Time
+			if !s.config.DemoMode {
+				expiresAt = s.sessions.Deadline(r.Context())
+			}
+			s.wsHub.ServeWSUntil(w, r, expiresAt)
+		}))
 		mux.Handle("/ws", wsHandler)
 		logger.Info("WebSocket endpoint enabled at /ws and /ws/", "auth_enabled", !s.config.DemoMode)
 	}

@@ -6,6 +6,7 @@ package websocket
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/chainguard-dev/clog"
 	"github.com/gorilla/websocket"
@@ -18,6 +19,16 @@ var upgrader = websocket.Upgrader{
 
 // ServeWS handles WebSocket requests from clients
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
+	h.ServeWSUntil(w, r, time.Time{})
+}
+
+// ServeWSUntil closes an authorized connection at its session's absolute expiry.
+// A zero deadline is reserved for connections that do not use sessions (local demo).
+func (h *Hub) ServeWSUntil(w http.ResponseWriter, r *http.Request, expiresAt time.Time) {
+	if !expiresAt.IsZero() && !time.Now().Before(expiresAt) {
+		http.Error(w, "Session expired", http.StatusUnauthorized)
+		return
+	}
 	logger := clog.FromContext(r.Context())
 
 	logger.Info("WebSocket upgrade request received",
@@ -41,9 +52,10 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	logger.Info("WebSocket connection established", "remote_addr", r.RemoteAddr)
 
 	client := &Client{
-		hub:  h,
-		conn: conn,
-		send: make(chan []byte, 256),
+		hub:       h,
+		conn:      conn,
+		send:      make(chan []byte, 256),
+		expiresAt: expiresAt,
 	}
 	select {
 	case client.hub.register <- client:

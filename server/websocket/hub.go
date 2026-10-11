@@ -36,9 +36,10 @@ type Hub struct {
 
 // Client represents a WebSocket client connection
 type Client struct {
-	hub  *Hub
-	conn *websocket.Conn
-	send chan []byte
+	expiresAt time.Time
+	hub       *Hub
+	conn      *websocket.Conn
+	send      chan []byte
 }
 
 // Message types for WebSocket communication
@@ -183,6 +184,12 @@ func (c *Client) readPump() {
 
 // writePump pumps messages from the hub to the WebSocket connection
 func (c *Client) writePump() {
+	var expiry <-chan time.Time
+	if !c.expiresAt.IsZero() {
+		timer := time.NewTimer(time.Until(c.expiresAt))
+		defer timer.Stop()
+		expiry = timer.C
+	}
 	ticker := time.NewTicker(54 * time.Second)
 	defer func() {
 		ticker.Stop()
@@ -191,7 +198,14 @@ func (c *Client) writePump() {
 
 	for {
 		select {
+		case <-expiry:
+			c.closeExpired()
+			return
 		case message, ok := <-c.send:
+			if !c.expiresAt.IsZero() && !time.Now().Before(c.expiresAt) {
+				c.closeExpired()
+				return
+			}
 			if err := c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
 				slog.Warn("Failed to set WebSocket write deadline", "error", err)
 				return
@@ -229,5 +243,13 @@ func (c *Client) writePump() {
 				return
 			}
 		}
+	}
+}
+
+func (c *Client) closeExpired() {
+	if err := c.conn.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "Session expired"),
+		time.Now().Add(time.Second)); err != nil {
+		slog.Debug("Failed to send session expiry close", "error", err)
 	}
 }
