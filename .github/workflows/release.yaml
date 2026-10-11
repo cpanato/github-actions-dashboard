@@ -31,6 +31,7 @@ jobs:
         with:
           go-version: '1.27'
           check-latest: true
+          cache: false
 
       - uses: ko-build/setup-ko@61b4d1d396f5b2e7d6bb6fefdce3dc38d1a13445 # v0.10
 
