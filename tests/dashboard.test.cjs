@@ -16,7 +16,7 @@ function setup(realtime = 'true') {
   document: {getElementById(id) {return elements[id];}, addEventListener(name, fn) {listeners[name] = fn;},
    body: {dataset: {realtime}, addEventListener(name, fn) {listeners[name] = fn;}}},
   window: {location: {protocol: 'https:', host: 'example.com'}, addEventListener() {}},
-  htmx: {ajax(method, url) {requests.push(url);}, trigger(selector) {triggers.push(selector);}},
+  htmx: {ajax(method, url) {requests.push(url);}, trigger(selector, event) {assert.equal(event, 'refresh'); triggers.push(selector);}},
   WebSocket: function() {sockets++;},
  };
  vm.createContext(context);

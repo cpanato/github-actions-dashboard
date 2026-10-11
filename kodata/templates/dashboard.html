@@ -3,8 +3,8 @@
 <head>
 	<title>GitHub Actions Dashboard</title>
 	<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
-	<script src="https://unpkg.com/htmx.org@1.9.10"></script>
-	<script src="https://cdn.tailwindcss.com"></script>
+	<script src="/static/htmx.min.js"></script>
+	<link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body class="bg-gray-50" data-realtime="{{.enableRealtime}}">
 	<div class="container mx-auto px-4 py-8">
@@ -21,7 +21,7 @@
 			<h2 class="text-2xl font-semibold mb-4">Analytics Overview</h2>
 			<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
 				<!-- Overall Stats -->
-				<div id="analytics-stats" hx-get="/api/analytics?days=7" hx-trigger="load, every 60s" hx-swap="innerHTML">
+				<div id="analytics-stats" hx-get="/api/analytics?days=7" hx-trigger="load, refresh, every 60s" hx-swap="innerHTML" hx-sync="this:queue last">
 					<div class="bg-white rounded-lg shadow p-6">
 						<div class="animate-pulse">
 							<div class="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
@@ -49,7 +49,7 @@
 		<!-- Flaky Tests Section -->
 		<div class="mb-8">
 			<h2 class="text-2xl font-semibold mb-4">Flaky Tests</h2>
-			<div id="flaky-tests-container" hx-get="/api/flaky-tests?days=30&min_runs=5" hx-trigger="load, every 120s" hx-swap="innerHTML">
+			<div id="flaky-tests-container" hx-get="/api/flaky-tests?days=30&min_runs=5" hx-trigger="load, refresh, every 120s" hx-swap="innerHTML" hx-sync="this:queue last">
 				<div class="flex items-center justify-center p-8 bg-white rounded-lg shadow">
 					<div class="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900"></div>
 					<span class="ml-3 text-gray-600">Loading flaky tests...</span>
@@ -60,7 +60,7 @@
 		<!-- Repositories Section -->
 		<div class="mb-8">
 			<h2 class="text-2xl font-semibold mb-4">Repositories</h2>
-			<div id="repositories-container" hx-get="/api/repositories" hx-trigger="load" hx-swap="innerHTML">
+			<div id="repositories-container" hx-get="/api/repositories" hx-trigger="load, refresh" hx-swap="innerHTML" hx-sync="this:queue last">
 				<div class="flex items-center justify-center p-8">
 					<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
 					<span class="ml-3 text-gray-600">Loading repositories...</span>
@@ -99,7 +99,7 @@
 					</div>
 				</div>
 			</div>
-			<div id="workflows-container" hx-get="/api/workflows?limit=20" hx-trigger="load" hx-swap="innerHTML">
+			<div id="workflows-container" hx-get="/api/workflows?limit=20" hx-trigger="load, refresh" hx-swap="innerHTML" hx-sync="this:queue last">
 				<div class="flex items-center justify-center p-8">
 					<div class="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
 					<span class="ml-3 text-gray-600">Loading workflows...</span>

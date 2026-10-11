@@ -1,0 +1,19 @@
+{
+  "name": "github-actions-dashboard",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/dashboard.test.cjs",
+    "test:e2e": "playwright test",
+    "build:assets": "node scripts/build-assets.cjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@tailwindcss/cli": "4.3.0",
+    "htmx.org": "1.9.10",
+    "pg": "8.23.1",
+    "tailwindcss": "4.3.0"
+  }
+}
