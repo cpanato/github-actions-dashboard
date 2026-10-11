@@ -67,3 +67,9 @@ An explicit `options.enable_realtime: false` disables the WebSocket endpoint.
 Database-backed routes return HTTP 503 until schema initialization succeeds;
 the server retries initialization using the same pool shared by webhook handlers.
 Shutdown cancels initialization retries and closes realtime connections.
+
+The dashboard renders server-generated HTML partials for HTMX requests. Realtime
+updates preserve active workflow filters and refresh repository, check and
+installation changes. Summary cards use the returned flaky-check count and the
+actual seven-day aggregate success rate. Run frontend regression tests with
+`node --test tests/dashboard.test.cjs` (Node 20 or newer).

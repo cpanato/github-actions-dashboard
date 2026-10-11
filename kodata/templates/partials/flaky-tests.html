@@ -42,3 +42,5 @@
 	<p class="text-gray-500">No flaky tests detected</p>
 </div>
 {{end}}
+
+<div id="flaky-count" hx-swap-oob="innerHTML">{{len .flaky_tests}}</div>
