@@ -1,5 +1,5 @@
 const {test: base, expect} = require('@playwright/test');
-const {createHmac} = require('node:crypto');
+const {createHmac, randomUUID} = require('node:crypto');
 const test = base.extend({
  page: async ({page}, use) => {
   const errors = [];
@@ -23,7 +23,7 @@ async function webhook(request, type, event) {
  const response = await request.post('/api/github/hook', {data, headers: {
   'content-type': 'application/json',
   'x-github-event': type,
-  'x-github-delivery': 'e2e-' + Date.now(),
+  'x-github-delivery': 'e2e-' + randomUUID(),
   'x-hub-signature-256': 'sha256=' + signature,
  }});
  expect(response.ok()).toBeTruthy();

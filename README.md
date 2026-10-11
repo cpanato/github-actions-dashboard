@@ -99,12 +99,17 @@ webhook handlers. Shutdown cancels retries and closes realtime connections.
 
 Use HTTPS and secure cookies in production. Sessions are held in memory, so
 restarts invalidate them; multiple replicas need shared session storage or routing
-affinity. Webhook processing uses an in-memory asynchronous queue: acknowledgement
-does not guarantee durable persistence, and failures require redelivery. Shutdown
-stops accepting new webhook work and drains accepted deliveries before closing
-the database. After a 30-second drain window, unfinished work is cancelled;
-handlers also have a 30-second execution deadline. Forced termination can still
-lose queued deliveries. Cloud Run
+affinity. Handled webhooks are acknowledged only after the verified payload is committed
+to PostgreSQL. Delivery IDs deduplicate identical redeliveries; conflicting content
+under the same ID returns 409. Missing IDs return 400, payloads above 10 MiB return
+413, and persistence failures return 503. Four workers claim deliveries with
+60-second leases and 30-second handler deadlines. Pending work and expired leases
+resume after restart. Processing is at least once, so handlers must be idempotent.
+Successful payloads are cleared, while IDs/hashes remain for deduplication; failed
+payloads and errors remain in the inbox for diagnosis. Automatic retry of handler
+failures is the next implementation step. Shutdown stops claims and finishes active
+work before closing PostgreSQL; unfinished persisted work remains available to the
+next process. See [webhook operations](docs/WEBHOOKS.md). Cloud Run
 and other deployments must provision the database connection and secrets separately.
 `make ko-local` builds a local image; the repository does not provide a deploy target.
 

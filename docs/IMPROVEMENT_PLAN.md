@@ -35,7 +35,7 @@ covering every query, aggregate and broadcast.
 
 ## Follow-up boundaries
 
-Durable webhook queues, workflow-history backfill, shared session storage for
+Workflow-history backfill, shared session storage for
 multiple replicas, computed workflow durations, cache implementation and
 per-user repository isolation are separate projects. Document these limits
 instead of claiming they are implemented. Existing repository rows cannot be
@@ -55,5 +55,6 @@ The original eight changes are merged. The next focused PRs cover:
    database outage/recovery.
 
 Each PR includes relevant validation and documentation. Commit creation and
-commit-rewriting rebases require explicit user approval. A durable webhook inbox
-with retries and processing metrics remains a separate project.
+commit-rewriting rebases require explicit user approval. The durable webhook inbox project is now underway; see
+[its implementation order](WEBHOOKS.md#implementation-order) for storage, retries
+and processing metrics.

@@ -55,6 +55,23 @@ func initializeDatabase(ctx context.Context, db *sql.DB) error {
 }
 
 const postgresSchema = `
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+ delivery_id TEXT PRIMARY KEY,
+ event_type TEXT NOT NULL,
+ payload BYTEA,
+ payload_hash TEXT NOT NULL,
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','processing','succeeded','failed')),
+ attempts INTEGER NOT NULL DEFAULT 0,
+ received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ locked_until TIMESTAMPTZ,
+ completed_at TIMESTAMPTZ,
+ last_error TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_pending ON webhook_deliveries(available_at,received_at) WHERE state='pending';
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_leases ON webhook_deliveries(locked_until) WHERE state='processing';
+
 CREATE TABLE IF NOT EXISTS repositories (
 	id BIGINT PRIMARY KEY,
 	owner TEXT NOT NULL,

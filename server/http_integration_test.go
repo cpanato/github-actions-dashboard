@@ -144,22 +144,85 @@ func TestPostgresSignedWebhookAndWebSocket(t *testing.T) {
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	// Each accepted delivery broadcasts after its database transaction commits.
-	// Wait for both deliveries before checking idempotence and dropping the schema.
-	for range 2 {
-		var message struct{ Type string }
-		if err := conn.ReadJSON(&message); err != nil {
-			t.Fatal(err)
-		}
-		if message.Type != "workflow_update" {
-			t.Fatalf("message=%+v", message)
-		}
+	// An identical delivery ID is processed once by the durable inbox.
+	var message struct{ Type string }
+	if err := conn.ReadJSON(&message); err != nil {
+		t.Fatal(err)
 	}
+	if message.Type != "workflow_update" {
+		t.Fatalf("message=%+v", message)
+	}
+	waitDelivery(t, s.webhookInbox, "integration-true", "succeeded")
 	var count int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM workflow_runs WHERE id=456`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
 		t.Fatal("duplicate delivery created additional rows")
+	}
+}
+
+func TestPostgresInboxReceiverValidationAndPersistenceFailure(t *testing.T) {
+	s, ts := integrationServer(t)
+	post := func(id string, payload []byte, signed bool) int {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/github/hook", bytes.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-GitHub-Event", "workflow_run")
+		req.Header.Set("X-GitHub-Delivery", id)
+		if signed {
+			mac := hmac.New(sha256.New, []byte("integration-secret"))
+			mac.Write(payload)
+			req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		}
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	payload := []byte(`{"action":"requested"}`)
+	for _, tc := range []struct {
+		id     string
+		signed bool
+	}{{"unsigned", false}, {"", true}} {
+		if status := post(tc.id, payload, tc.signed); status != 400 {
+			t.Fatalf("invalid receiver status=%d", status)
+		}
+	}
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM webhook_deliveries`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("invalid events persisted: count=%d err=%v", count, err)
+	}
+	if status := post("deduplicated", payload, true); status != 200 {
+		t.Fatalf("accepted delivery=%d", status)
+	}
+	waitDelivery(t, s.webhookInbox, "deduplicated", "succeeded")
+	if status := post("deduplicated", payload, true); status != 200 {
+		t.Fatalf("identical duplicate=%d", status)
+	}
+	if status := post("deduplicated", []byte(`{"action":"queued"}`), true); status != 409 {
+		t.Fatalf("conflicting duplicate=%d", status)
+	}
+	if status := post("oversized", bytes.Repeat([]byte("x"), (10<<20)+1), true); status != 413 {
+		t.Fatalf("oversized=%d", status)
+	}
+	resp, err := ts.Client().Get(ts.URL + "/api/github/hook")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 405 {
+		t.Fatalf("GET webhook=%d", resp.StatusCode)
+	}
+	if err := s.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if status := post("database-unavailable", payload, true); status != 503 {
+		t.Fatalf("unpersisted delivery acknowledged with %d", status)
 	}
 }
