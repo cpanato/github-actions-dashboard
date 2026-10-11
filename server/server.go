@@ -438,34 +438,11 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 
 	logger := clog.FromContext(ctx)
 
-	// Parse query parameters
-	opts := WorkflowRunOptions{
-		Limit: 50, // Default limit
+	opts, err := parseWorkflowQuery(r, s.config.Options.DefaultTimeWindow)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-
-	opts.RepositoryID = parseRepositoryID(r)
-
-	if status := r.URL.Query().Get("status"); status != "" {
-		opts.Status = status
-	}
-
-	if conclusion := r.URL.Query().Get("conclusion"); conclusion != "" {
-		opts.Conclusion = conclusion
-	}
-
-	// Parse time window (e.g., "12h", "24h")
-	if since := r.URL.Query().Get("since"); since != "" {
-		if duration, err := time.ParseDuration(since); err == nil {
-			opts.Since = time.Now().Add(-duration)
-		}
-	} else {
-		// Default to configured time window
-		if duration, err := time.ParseDuration(s.config.Options.DefaultTimeWindow); err == nil {
-			opts.Since = time.Now().Add(-duration)
-		}
-	}
-
-	opts.Limit = parseQueryInt(r, "limit", opts.Limit)
 
 	// Get workflow runs
 	runs, err := GetWorkflowRuns(ctx, s.db, opts)
@@ -490,7 +467,7 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 
 	// Fallback to JSON for API requests
 	w.Header().Set("Content-Type", "application/json")
-	if err := writeJSON(w, map[string]interface{}{"workflows": runs}); err != nil {
+	if err := writeJSON(w, map[string]interface{}{"workflows": runs, "limit": opts.Limit, "offset": opts.Offset}); err != nil {
 		logger.Error("Failed to write JSON response", "error", err)
 	}
 }
@@ -502,27 +479,6 @@ func writeJSON(w http.ResponseWriter, data interface{}) error {
 	return encoder.Encode(data)
 }
 
-func parseRepositoryID(r *http.Request) int64 {
-	value := r.URL.Query().Get("repository_id")
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || parsed < 0 {
-		return 0
-	}
-	return parsed
-}
-
-func parseQueryInt(r *http.Request, key string, fallback int) int {
-	value := r.URL.Query().Get(key)
-	if value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed < 0 {
-		return fallback
-	}
-	return parsed
-}
-
 // handleAnalytics returns analytics data
 func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	if !s.requireDatabase(w) {
@@ -531,8 +487,11 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := clog.FromContext(ctx)
 
-	repoID := parseRepositoryID(r)
-	days := parseQueryInt(r, "days", 30)
+	repoID, days, err := parseMetricQuery(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	analytics, err := GetAnalytics(ctx, s.db, repoID, days)
 	if err != nil {
@@ -568,9 +527,16 @@ func (s *Server) handleFlakyTests(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := clog.FromContext(ctx)
 
-	repoID := parseRepositoryID(r)
-	minRuns := parseQueryInt(r, "min_runs", 5)
-	days := parseQueryInt(r, "days", 30)
+	repoID, days, err := parseMetricQuery(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	minRuns, err := parseQueryInt(r, "min_runs", 5, 1, 10000)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	flakyTests, err := GetFlakyTests(ctx, s.db, repoID, minRuns, days)
 	if err != nil {
@@ -606,8 +572,11 @@ func (s *Server) handleTrends(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := clog.FromContext(ctx)
 
-	repoID := parseRepositoryID(r)
-	days := parseQueryInt(r, "days", 30)
+	repoID, days, err := parseMetricQuery(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	trends, err := GetTrendData(ctx, s.db, repoID, days)
 	if err != nil {

@@ -137,8 +137,8 @@ func GetWorkflowRuns(ctx context.Context, db *sql.DB, opts WorkflowRunOptions) (
 		  AND ($5::TEXT = '' OR wr.workflow_name = $5)
 		  AND ($6::TEXT = '' OR wr.event = $6)
 		  AND ($7::TIMESTAMP IS NULL OR wr.created_at >= $7)
-		ORDER BY wr.created_at DESC
-		LIMIT NULLIF($8::INTEGER, 0)
+		ORDER BY wr.created_at DESC, wr.id DESC
+		LIMIT NULLIF($8::INTEGER, 0) OFFSET $9::INTEGER
 	`
 
 	var since interface{}
@@ -158,6 +158,7 @@ func GetWorkflowRuns(ctx context.Context, db *sql.DB, opts WorkflowRunOptions) (
 		opts.Event,
 		since,
 		limit,
+		opts.Offset,
 	}
 
 	rows, err := db.QueryContext(ctx, query, args...)
@@ -187,6 +188,7 @@ func GetWorkflowRuns(ctx context.Context, db *sql.DB, opts WorkflowRunOptions) (
 
 // WorkflowRunOptions defines filtering options for workflow runs
 type WorkflowRunOptions struct {
+	Offset       int
 	RepositoryID int64
 	Status       string
 	Conclusion   string

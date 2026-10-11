@@ -109,13 +109,19 @@ workflows, analytics and flaky checks. Trends always returns JSON.
 | `/` | Repository overview, analytics and recent workflow runs |
 | `/repository/{owner}/{repo}` | `workflow`, `branch`, `event`, `view=grid\|cards`, `limit` (commit columns; default 50, maximum 500) |
 | `/api/repositories` | All tracked repositories with all-time statistics |
-| `/api/workflows` | `repository_id`, `status`, `conclusion`, `since` (relative Go duration), `limit` (default 50; 0 is unbounded) |
-| `/api/analytics` | `repository_id`, `days` (default 30) |
-| `/api/flaky-tests` | `repository_id`, `days` (default 30), `min_runs` (default 5); top 20 results |
-| `/api/trends` | `repository_id`, `days` (default 30); daily aggregates |
+| `/api/workflows` | `repository_id`, `status`, `conclusion`, `since` (relative Go duration), `limit` (1–500; default 50), `offset` (0–100000; default 0) |
+| `/api/analytics` | `repository_id`, `days` (1–365; default 30) |
+| `/api/flaky-tests` | `repository_id`, `days` (1–365; default 30), `min_runs` (1–10000; default 5); top 20 results |
+| `/api/trends` | `repository_id`, `days` (1–365; default 30); daily aggregates |
 | `/api/health` | Public database readiness check, 200 or 503 |
 | `/api/github/hook` | Public POST receiver; verifies GitHub webhook signatures |
 | `/ws` | Authorized realtime connection when enabled |
+
+Invalid API parameters return 400. `since` must be a positive Go duration;
+`repository_id` must be a nonnegative integer. Workflow JSON includes `limit` and
+`offset`; fetch the next page by adding `limit` to `offset`, stopping when fewer
+than `limit` runs are returned. Runs sort by creation time and ID descending.
+Offsets can shift as new webhooks arrive; this API does not provide snapshot isolation.
 
 Omitting `repository_id` aggregates across all tracked repositories. Repository
 statistics are all-time; analytics and trends use the requested date window.
