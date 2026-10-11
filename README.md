@@ -139,8 +139,36 @@ This is a check-level intermittency heuristic, not proof that individual tests f
 See [testing](docs/TESTING.md) for disposable-database setup, browser installation
 and failure artifacts. CI runs Go, database, frontend and browser tests, checks
 asset reproducibility and builds the ko image. Releases use GoReleaser, SBOMs and
-cosign image signatures. See the [improvement plan](docs/IMPROVEMENT_PLAN.md) for
+cosign signatures; see [Releases and verification](#releases-and-verification). See the [improvement plan](docs/IMPROVEMENT_PLAN.md) for
 review order and remaining project boundaries.
+
+## Releases and verification
+
+Releases are built by GoReleaser from `v*` tags. Each release publishes binary
+archives, `checksums.txt`, a `checksums.txt.sigstore.json` signature bundle, and a
+container image at `ghcr.io/cpanato/github-actions-dashboard` with an SBOM. The
+image and checksums are signed with [cosign](https://github.com/sigstore/cosign)
+keyless signing from the release workflow.
+
+Verify the container image (replace `vX.Y.Z` with the release tag):
+
+```bash
+cosign verify ghcr.io/cpanato/github-actions-dashboard:vX.Y.Z \
+  --certificate-identity-regexp '^https://github.com/cpanato/github-actions-dashboard/\.github/workflows/release\.yaml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Verify the release archives by checking the signed checksums, then the archives
+against them:
+
+```bash
+cosign verify-blob checksums.txt \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/cpanato/github-actions-dashboard/\.github/workflows/release\.yaml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+sha256sum --ignore-missing -c checksums.txt
+```
 
 ## License
 
