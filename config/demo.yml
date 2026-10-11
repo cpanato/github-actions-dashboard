@@ -19,7 +19,7 @@ github:
     webhook_secret: "local-demo-webhook-secret"
 
 options:
-  default_time_window: "7d"
+  default_time_window: "168h"
   max_repos_per_page: 50
   enable_realtime: true
 

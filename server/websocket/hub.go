@@ -7,6 +7,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -29,7 +30,8 @@ type Hub struct {
 	// Unregister requests from clients
 	unregister chan *Client
 
-	mu sync.RWMutex
+	mu   sync.RWMutex
+	done chan struct{}
 }
 
 // Client represents a WebSocket client connection
@@ -52,12 +54,25 @@ func NewHub() *Hub {
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		clients:    make(map[*Client]bool),
+		done:       make(chan struct{}),
 	}
 }
 
 // Run starts the hub's main loop
 func (h *Hub) Run(ctx context.Context) {
 	logger := clog.FromContext(ctx)
+	defer func() {
+		close(h.done)
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for client := range h.clients {
+			close(client.send)
+			if client.conn != nil {
+				client.conn.Close()
+			}
+			delete(h.clients, client)
+		}
+	}()
 
 	for {
 		select {
@@ -115,8 +130,19 @@ func (h *Hub) Broadcast(msgType string, data interface{}) error {
 		return err
 	}
 
-	h.broadcast <- jsonData
-	return nil
+	select {
+	case <-h.done:
+		return errors.New("websocket hub stopped")
+	default:
+	}
+	select {
+	case <-h.done:
+		return errors.New("websocket hub stopped")
+	case h.broadcast <- jsonData:
+		return nil
+	default:
+		return errors.New("websocket broadcast queue full")
+	}
 }
 
 // ClientCount returns the number of connected clients
@@ -129,7 +155,10 @@ func (h *Hub) ClientCount() int {
 // readPump pumps messages from the WebSocket connection to the hub
 func (c *Client) readPump() {
 	defer func() {
-		c.hub.unregister <- c
+		select {
+		case c.hub.unregister <- c:
+		case <-c.hub.done:
+		}
 		c.conn.Close()
 	}()
 

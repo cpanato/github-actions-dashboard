@@ -91,7 +91,7 @@ type SessionsConfig struct {
 }
 
 func ParseConfig(bytes []byte) (*Config, error) {
-	var c Config
+	c := Config{Options: DashboardOptions{EnableRealtime: true}}
 	if err := yaml.UnmarshalStrict(bytes, &c); err != nil {
 		return nil, err
 	}
@@ -108,10 +108,6 @@ func ParseConfig(bytes []byte) (*Config, error) {
 	}
 	if c.Options.MaxReposPerPage == 0 {
 		c.Options.MaxReposPerPage = 50
-	}
-	// Enable real-time updates by default
-	if !c.Options.EnableRealtime {
-		c.Options.EnableRealtime = true
 	}
 	if c.Database.MaxOpenConns == 0 {
 		c.Database.MaxOpenConns = 25
@@ -180,6 +176,9 @@ func ParseConfig(bytes []byte) (*Config, error) {
 		c.Database.Driver = "postgres"
 	}
 
+	if duration, err := time.ParseDuration(c.Options.DefaultTimeWindow); err != nil || duration <= 0 {
+		return nil, fmt.Errorf("options.default_time_window must be a positive Go duration (for example 168h)")
+	}
 	return &c, nil
 }
 

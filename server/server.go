@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/alexedwards/scs/v2"
@@ -40,6 +42,14 @@ type Server struct {
 	sessions      *scs.SessionManager
 	clientCreator githubapp.ClientCreator
 	tmpl          *template.Template
+	ctx           context.Context
+	cancel        context.CancelFunc
+	ready         atomic.Bool
+	mu            sync.Mutex
+	closed        bool
+	workers       sync.WaitGroup
+	closeOnce     sync.Once
+	closeErr      error
 }
 
 // New creates a new Server instance
@@ -50,22 +60,29 @@ func New(config *Config) (*Server, error) {
 		return nil, err
 	}
 
-	// Initialize database (allow failure for initial startup)
-	db, err := InitDatabase(&config.Database)
+	// Keep the pool stable so HTTP and webhook handlers recover together.
+	db, err := OpenDatabase(&config.Database)
 	if err != nil {
-		if config.DemoMode {
-			return nil, errors.Wrap(err, "demo mode requires a working database")
-		}
-		logger.Warn("Failed to initialize database, server will start without database", "error", err)
-		// Continue without database - it will be retried later
-		db = nil
+		return nil, err
+	}
+	initCtx, initCancel := context.WithTimeout(ctx, 2*time.Second)
+	initErr := initializeDatabase(initCtx, db)
+	initCancel()
+	if config.DemoMode && initErr != nil {
+		db.Close()
+		db, initErr = InitDatabase(&config.Database)
 	}
 	if config.DemoMode {
+		if initErr != nil {
+			return nil, errors.Wrap(initErr, "demo mode requires a working database")
+		}
 		if err := seedDemoData(ctx, db); err != nil {
 			db.Close()
 			return nil, errors.Wrap(err, "failed to seed demo data")
 		}
-		logger.Info("Seeded demo repositories and workflow runs")
+	}
+	if initErr != nil {
+		logger.Warn("Database unavailable; initialization will retry on startup", "error", initErr)
 	}
 
 	// Create GitHub App client creator
@@ -89,7 +106,10 @@ func New(config *Config) (*Server, error) {
 	sessions := auth.NewSessionManager(sessionLifetime)
 
 	// Create WebSocket hub
-	wsHub := websocket.NewHub()
+	var wsHub *websocket.Hub
+	if config.Options.EnableRealtime {
+		wsHub = websocket.NewHub()
+	}
 
 	// Create base handler with shared dependencies
 	base := &handler.Base{
@@ -140,7 +160,8 @@ func New(config *Config) (*Server, error) {
 		return nil, errors.Wrap(err, "failed to parse partial templates")
 	}
 
-	return &Server{
+	lifetimeCtx, cancel := context.WithCancel(context.Background())
+	s := &Server{
 		config:        config,
 		db:            db,
 		handlers:      handlers,
@@ -149,25 +170,53 @@ func New(config *Config) (*Server, error) {
 		sessions:      sessions,
 		clientCreator: cc,
 		tmpl:          tmpl,
-	}, nil
+		ctx:           lifetimeCtx, cancel: cancel,
+	}
+	s.ready.Store(initErr == nil)
+	return s, nil
 }
 
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	logger := clog.New(clog.FromContext(context.Background()).Handler()).With("component", "server")
 
-	// If database is nil, try to reconnect in background
-	if s.db == nil {
-		logger.Warn("Starting server without database connection, will retry in background")
-		go s.retryDatabaseConnection(logger)
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return http.ErrServerClosed
 	}
-
-	// Start WebSocket hub
-	ctx := clog.WithLogger(context.Background(), logger)
+	if !s.ready.Load() {
+		s.workers.Add(1)
+		go func() { defer s.workers.Done(); s.retryDatabaseConnection() }()
+	}
 	if s.config.Options.EnableRealtime && s.wsHub != nil {
-		go s.wsHub.Run(ctx)
-		logger.Info("WebSocket hub started")
+		s.workers.Add(1)
+		go func() { defer s.workers.Done(); s.wsHub.Run(s.ctx) }()
 	}
+	s.mu.Unlock()
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return http.ErrServerClosed
+	}
+	s.httpServer = &http.Server{
+		Addr:              fmt.Sprintf("%s:%d", s.config.Server.Address, s.config.Server.Port),
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second,
+		WriteTimeout: 45 * time.Second, IdleTimeout: 60 * time.Second,
+	}
+	httpServer := s.httpServer
+	s.mu.Unlock()
+	logger.Info("Starting server", "address", httpServer.Addr)
+	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// Handler returns the application routes for serving or integration testing.
+func (s *Server) Handler() http.Handler {
+	logger := clog.FromContext(context.Background())
 
 	// Create HTTP mux
 	mux := http.NewServeMux()
@@ -259,50 +308,47 @@ func (s *Server) Start() error {
 	// Root handler MUST be last (catch-all)
 	mux.Handle("/", requireAuth(http.HandlerFunc(s.handleDashboard)))
 
-	// Determine address
-	addr := fmt.Sprintf("%s:%d", s.config.Server.Address, s.config.Server.Port)
-
-	// Start server with logger and session middleware wrapping everything
-	logger.Info("Starting server",
-		"address", addr,
-		"auth_enabled", !s.config.DemoMode)
-
-	s.httpServer = &http.Server{
-		Addr:              addr,
-		Handler:           loggerMiddleware(sessionMiddleware(mux)),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      45 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
-	if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
+	return loggerMiddleware(sessionMiddleware(mux))
 }
 
-// Close gracefully shuts down the server
+// Close cancels background work and shuts down the server exactly once.
 func (s *Server) Close() error {
-	var closeErr error
-	if s.httpServer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		closeErr = s.httpServer.Shutdown(ctx)
-	}
-	if s.db != nil {
-		if err := s.db.Close(); closeErr == nil {
-			closeErr = err
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		if s.cancel != nil {
+			s.cancel()
 		}
+		httpServer := s.httpServer
+		s.mu.Unlock()
+		if httpServer != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			s.closeErr = httpServer.Shutdown(ctx)
+		}
+		s.workers.Wait()
+		if s.db != nil {
+			if err := s.db.Close(); s.closeErr == nil {
+				s.closeErr = err
+			}
+		}
+	})
+	return s.closeErr
+}
+
+func (s *Server) requireDatabase(w http.ResponseWriter) bool {
+	if s.db == nil || !s.ready.Load() {
+		http.Error(w, "Database unavailable", http.StatusServiceUnavailable)
+		return false
 	}
-	return closeErr
+	return true
 }
 
 // handleHealth returns server health status
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	logger := clog.FromContext(r.Context())
 	// Check database connection
-	if s.db == nil {
-		http.Error(w, "Database unavailable", http.StatusServiceUnavailable)
+	if !s.requireDatabase(w) {
 		return
 	}
 	if err := s.db.PingContext(r.Context()); err != nil {
@@ -345,6 +391,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 // handleRepositories returns repository list
 func (s *Server) handleRepositories(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDatabase(w) {
+		return
+	}
 	ctx := r.Context()
 	logger := clog.FromContext(ctx)
 
@@ -385,6 +434,9 @@ func (s *Server) handleRepositories(w http.ResponseWriter, r *http.Request) {
 
 // handleWorkflows returns workflow runs
 func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDatabase(w) {
+		return
+	}
 	ctx := r.Context()
 
 	logger := clog.FromContext(ctx)
@@ -476,6 +528,9 @@ func parseQueryInt(r *http.Request, key string, fallback int) int {
 
 // handleAnalytics returns analytics data
 func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDatabase(w) {
+		return
+	}
 	ctx := r.Context()
 	logger := clog.FromContext(ctx)
 
@@ -510,6 +565,9 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 
 // handleFlakyTests returns flaky test data
 func (s *Server) handleFlakyTests(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDatabase(w) {
+		return
+	}
 	ctx := r.Context()
 	logger := clog.FromContext(ctx)
 
@@ -545,6 +603,9 @@ func (s *Server) handleFlakyTests(w http.ResponseWriter, r *http.Request) {
 
 // handleTrends returns trend data
 func (s *Server) handleTrends(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDatabase(w) {
+		return
+	}
 	ctx := r.Context()
 	logger := clog.FromContext(ctx)
 
@@ -565,6 +626,9 @@ func (s *Server) handleTrends(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRepositoryDetail(w http.ResponseWriter, r *http.Request) {
+	if !s.requireDatabase(w) {
+		return
+	}
 	ctx := r.Context()
 	logger := clog.FromContext(ctx)
 
@@ -701,27 +765,22 @@ func (s *Server) handleRepositoryDetail(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// retryDatabaseConnection attempts to connect to the database in a loop
-func (s *Server) retryDatabaseConnection(logger *clog.Logger) {
-	retryDelay := 5 * time.Second
-	maxRetries := 60 // Try for 5 minutes
-
-	for i := 0; i < maxRetries; i++ {
-		logger.Info("Attempting to connect to database", "attempt", i+1, "max", maxRetries)
-
-		db, err := InitDatabase(&s.config.Database)
-		if err != nil {
-			logger.Warn("Database connection failed, will retry", "error", err, "retry_in", retryDelay)
-			time.Sleep(retryDelay)
-			continue
+// retryDatabaseConnection initializes the stable pool until ready or stopped.
+func (s *Server) retryDatabaseConnection() {
+	logger := clog.FromContext(s.ctx)
+	for {
+		ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+		err := initializeDatabase(ctx, s.db)
+		cancel()
+		if err == nil {
+			s.ready.Store(true)
+			return
 		}
-
-		// Success! Update the server's database connection
-		s.db = db
-		s.base.DB = db
-		logger.Info("Database connection established successfully")
-		return
+		logger.Warn("Database initialization failed; retrying", "error", err)
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
 	}
-
-	logger.Error("Failed to connect to database after maximum retries", "max_retries", maxRetries)
 }

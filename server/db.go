@@ -5,67 +5,52 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 	"time"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
-// InitDatabase creates and configures the database connection
-func InitDatabase(cfg *DatabaseConfig) (*sql.DB, error) {
+// OpenDatabase creates a stable pool; it can reconnect without replacing its pointer.
+func OpenDatabase(cfg *DatabaseConfig) (*sql.DB, error) {
 	db, err := sql.Open(cfg.Driver, cfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
-
-	// Configure connection pool
 	db.SetMaxOpenConns(cfg.MaxOpenConns)
 	db.SetMaxIdleConns(cfg.MaxIdleConns)
-
-	// Test connection with retries (for Cloud SQL socket availability)
-	maxRetries := 10
-	retryDelay := 2 * time.Second
-	var pingErr error
-
-	for i := 0; i < maxRetries; i++ {
-		pingErr = db.Ping()
-		if pingErr == nil {
-			if i > 0 {
-				slog.Info("Database connection established after retry", "attempts", i+1)
-			}
-			break
-		}
-
-		if i < maxRetries-1 {
-			// Only log every 3rd attempt to reduce noise
-			if i%3 == 0 || i >= maxRetries-2 {
-				slog.Warn("Database ping failed; retrying", "attempt", i+1, "max_attempts", maxRetries, "error", pingErr, "retry_delay", retryDelay)
-			}
-			time.Sleep(retryDelay)
-		}
-	}
-
-	if pingErr != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to ping database after %d attempts: %w", maxRetries, pingErr)
-	}
-
-	slog.Info("Database connection established")
-
-	// Initialize schema
-	if err := initSchema(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to initialize schema: %w", err)
-	}
-
 	return db, nil
 }
 
-// initSchema creates the necessary tables if they don't exist
-func initSchema(db *sql.DB) error {
-	_, err := db.Exec(postgresSchema)
+// InitDatabase initializes a database within a bounded startup window.
+func InitDatabase(cfg *DatabaseConfig) (*sql.DB, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	db, err := OpenDatabase(cfg)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		err = initializeDatabase(ctx, db)
+		if err == nil {
+			return db, nil
+		}
+		select {
+		case <-ctx.Done():
+			db.Close()
+			return nil, fmt.Errorf("failed to initialize database: %w", err)
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+func initializeDatabase(ctx context.Context, db *sql.DB) error {
+	if err := db.PingContext(ctx); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, postgresSchema)
 	return err
 }
 
