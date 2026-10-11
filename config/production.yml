@@ -27,6 +27,7 @@ database:
 cache:
   workflow_ttl: "15m"
   max_entries: 10000
+  stats_ttl: "1m"
 
 options:
   default_time_window: "12h"

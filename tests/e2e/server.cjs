@@ -71,6 +71,8 @@ const {randomBytes} = require('node:crypto');
    database: {driver: 'postgres', url: appURL.toString()},
    github: {app: {webhook_secret: 'e2e-only-secret'}},
    options: {default_time_window: '168h', enable_realtime: !polling},
+   // Tests assert immediate refreshes after signed webhooks, so disable stats caching.
+   cache: {stats_ttl: '-1s'},
    logging: {level: 'error'},
   }));
   const binary = path.join(temporary, 'dashboard');

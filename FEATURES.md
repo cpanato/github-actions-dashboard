@@ -21,8 +21,10 @@ and [testing](docs/TESTING.md) for the test harness.
 
 SQLite, history backfill, automatic webhook retries, per-user repository filtering,
 shared session storage, workflow-duration analytics and stored workflow-job
-collection are not implemented. Cache and max-repository configuration fields
-remain accepted for compatibility but do not currently cache or paginate data.
+collection are not implemented. `cache.workflow_ttl` and
+`options.max_repos_per_page` remain accepted for compatibility but do not currently
+cache or paginate data. Repository, analytics and flaky-check results are cached in
+memory per instance (`cache.stats_ttl`, `cache.max_entries`).
 Only completed webhook events are stored, so queued/running examples are synthetic
 demo data rather than live progress tracking. The flaky-check result is a heuristic
 based on check outcomes across commits, not individual test retries on one commit.
