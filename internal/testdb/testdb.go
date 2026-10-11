@@ -13,9 +13,9 @@ import (
 	_ "github.com/lib/pq" // Registers the PostgreSQL driver for test schema connections.
 )
 
-// Open creates a unique schema in an explicitly configured loopback test database.
+// URL creates a unique schema in an explicitly configured loopback test database.
 // Tests skip when DASHBOARD_TEST_DATABASE_URL is absent.
-func Open(t *testing.T) *sql.DB {
+func URL(t *testing.T) string {
 	t.Helper()
 	raw := os.Getenv("DASHBOARD_TEST_DATABASE_URL")
 	if raw == "" {
@@ -53,7 +53,13 @@ func Open(t *testing.T) *sql.DB {
 	query := u.Query()
 	query.Set("search_path", schema)
 	u.RawQuery = query.Encode()
-	db, err := sql.Open("postgres", u.String())
+	return u.String()
+}
+
+// Open creates a database pool using a disposable test schema.
+func Open(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("postgres", URL(t))
 	if err != nil {
 		t.Fatal(err)
 	}
