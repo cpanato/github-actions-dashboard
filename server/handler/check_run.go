@@ -6,6 +6,7 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 
 	"github.com/chainguard-dev/clog"
@@ -49,9 +50,14 @@ func (h *CheckRunHandler) Handle(ctx context.Context, _, _ string, payload []byt
 		"repository", repo.GetFullName())
 
 	// Store check run in database
-	if err := h.storeCheckRun(ctx, checkRun, repo); err != nil {
+	stored, err := h.storeCheckRun(ctx, checkRun, repo, event.GetInstallation().GetID())
+	if err != nil {
 		logger.Error("Failed to store check run", "error", err)
 		return err
+	}
+
+	if !stored {
+		return nil
 	}
 
 	// Broadcast update if WebSocket enabled
@@ -73,28 +79,14 @@ func (h *CheckRunHandler) Handle(ctx context.Context, _, _ string, payload []byt
 	return nil
 }
 
-// storeCheckRun saves check run data to the database
-func (h *CheckRunHandler) storeCheckRun(ctx context.Context, checkRun *github.CheckRun, repo *github.Repository) error {
-	logger := clog.FromContext(ctx)
-
-	// Check if database is available
-	if h.DB == nil {
-		logger.Warn("Database not available, skipping check run storage")
-		return errors.New("database not available")
+// storeCheckRun atomically stores an event only while installation access is active.
+func (h *CheckRunHandler) storeCheckRun(ctx context.Context, checkRun *github.CheckRun, repo *github.Repository, installationID int64) (bool, error) {
+	if checkRun.GetID() <= 0 {
+		return false, errors.New("missing run ID")
 	}
-
-	// Ensure repository exists
-	_, err := h.DB.ExecContext(ctx, `
-		INSERT INTO repositories (id, owner, name, full_name, default_branch)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
-	`, repo.GetID(), repo.GetOwner().GetLogin(), repo.GetName(), repo.GetFullName(), repo.GetDefaultBranch())
-	if err != nil {
-		return errors.Wrap(err, "failed to upsert repository")
-	}
-
-	// Store check run details
-	_, err = h.DB.ExecContext(ctx, `
+	return h.withRepository(ctx, installationID, repo, func(tx *sql.Tx) error {
+		// Store check run details
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO check_runs (
 			id, repository_id, name, status, conclusion,
 			html_url, details_url, started_at, completed_at
@@ -103,25 +95,18 @@ func (h *CheckRunHandler) storeCheckRun(ctx context.Context, checkRun *github.Ch
 			status = EXCLUDED.status,
 			conclusion = EXCLUDED.conclusion,
 			completed_at = EXCLUDED.completed_at
+ WHERE EXCLUDED.completed_at >= check_runs.completed_at
 	`,
-		checkRun.GetID(),
-		repo.GetID(),
-		checkRun.GetName(),
-		checkRun.GetStatus(),
-		checkRun.GetConclusion(),
-		checkRun.GetHTMLURL(),
-		checkRun.GetDetailsURL(),
-		checkRun.GetStartedAt().Time,
-		checkRun.GetCompletedAt().Time,
-	)
-	if err != nil {
-		return errors.Wrap(err, "failed to insert check run")
-	}
-
-	logger.Info("Stored check run",
-		"check_run_id", checkRun.GetID(),
-		"name", checkRun.GetName(),
-		"conclusion", checkRun.GetConclusion())
-
-	return nil
+			checkRun.GetID(),
+			repo.GetID(),
+			checkRun.GetName(),
+			checkRun.GetStatus(),
+			checkRun.GetConclusion(),
+			checkRun.GetHTMLURL(),
+			checkRun.GetDetailsURL(),
+			checkRun.GetStartedAt().Time,
+			checkRun.GetCompletedAt().Time,
+		)
+		return err
+	})
 }

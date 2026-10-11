@@ -65,6 +65,20 @@ CREATE TABLE IF NOT EXISTS repositories (
 	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE repositories ADD COLUMN IF NOT EXISTS installation_id BIGINT;
+
+CREATE TABLE IF NOT EXISTS installations (
+ id BIGINT PRIMARY KEY,
+ active BOOLEAN NOT NULL DEFAULT TRUE
+);
+CREATE TABLE IF NOT EXISTS repository_access (
+ installation_id BIGINT NOT NULL REFERENCES installations(id),
+ repository_id BIGINT NOT NULL,
+ active BOOLEAN NOT NULL DEFAULT TRUE,
+ PRIMARY KEY (installation_id, repository_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_repositories_installation ON repositories(installation_id);
 CREATE INDEX IF NOT EXISTS idx_repositories_full_name ON repositories(full_name);
 
 CREATE TABLE IF NOT EXISTS workflow_runs (

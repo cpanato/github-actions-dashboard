@@ -6,6 +6,7 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 
 	"github.com/chainguard-dev/clog"
@@ -77,94 +78,78 @@ func (h *InstallationHandler) Handle(ctx context.Context, eventType, _ string, p
 }
 
 func (h *InstallationHandler) handleInstallationCreated(ctx context.Context, event github.InstallationEvent) error {
-	logger := clog.FromContext(ctx)
-
-	// Add all repositories from the installation
-	for _, repo := range event.Repositories {
-		_, err := h.DB.ExecContext(ctx, `
-			INSERT INTO repositories (id, owner, name, full_name, default_branch)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
-		`, repo.GetID(), event.Installation.GetAccount().GetLogin(), repo.GetName(), repo.GetFullName(), "main")
-		if err != nil {
-			logger.Error("Failed to add repository", "error", err, "repo", repo.GetFullName())
-			continue
-		}
-		logger.Info("Added repository from installation", "repository", repo.GetFullName())
-	}
-
-	if h.WSHub != nil {
-		if err := h.WSHub.Broadcast("installation_update", map[string]interface{}{
-			"action": "created",
-			"count":  len(event.Repositories),
-		}); err != nil {
-			logger.Warn("Failed to broadcast installation update", "error", err)
-		}
-	}
-
-	return nil
+	return h.addRepositories(ctx, event.GetInstallation().GetID(), event.Repositories, "installation_update")
 }
 
 func (h *InstallationHandler) handleInstallationDeleted(ctx context.Context, event github.InstallationEvent) error {
-	logger := clog.FromContext(ctx)
-
-	// Optionally: Mark repositories as inactive or remove them
-	// For now, we'll just log it
-	logger.Info("Installation deleted - repositories will remain in database",
-		"installation_id", event.Installation.GetID())
-
-	if h.WSHub != nil {
-		if err := h.WSHub.Broadcast("installation_update", map[string]interface{}{
-			"action": "deleted",
-		}); err != nil {
-			logger.Warn("Failed to broadcast installation update", "error", err)
+	id := event.GetInstallation().GetID()
+	if err := h.withInstallation(ctx, id, func(tx *sql.Tx, _ bool) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE installations SET active=FALSE WHERE id=$1`, id); err != nil {
+			return err
 		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM repositories WHERE installation_id=$1`, id)
+		return err
+	}); err != nil {
+		return err
 	}
-
+	h.broadcastLifecycle(ctx, "installation_update")
 	return nil
 }
 
 func (h *InstallationHandler) handleRepositoriesAdded(ctx context.Context, event github.InstallationRepositoriesEvent) error {
-	logger := clog.FromContext(ctx)
+	return h.addRepositories(ctx, event.GetInstallation().GetID(), event.RepositoriesAdded, "repositories_added")
+}
 
-	for _, repo := range event.RepositoriesAdded {
-		_, err := h.DB.ExecContext(ctx, `
-			INSERT INTO repositories (id, owner, name, full_name, default_branch)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
-		`, repo.GetID(), event.Installation.GetAccount().GetLogin(), repo.GetName(), repo.GetFullName(), "main")
-		if err != nil {
-			logger.Error("Failed to add repository", "error", err, "repo", repo.GetFullName())
-			continue
+func (h *InstallationHandler) addRepositories(ctx context.Context, id int64, repos []*github.Repository, eventType string) error {
+	if err := h.withInstallation(ctx, id, func(tx *sql.Tx, active bool) error {
+		// Installation IDs are never reused; delayed created/added events cannot resurrect a deleted installation.
+		if !active {
+			return nil
 		}
-		logger.Info("Added repository", "repository", repo.GetFullName())
-	}
-
-	if h.WSHub != nil {
-		if err := h.WSHub.Broadcast("repositories_added", map[string]interface{}{
-			"count": len(event.RepositoriesAdded),
-		}); err != nil {
-			logger.Warn("Failed to broadcast repositories added", "error", err)
+		for _, repo := range repos {
+			if err := upsertRepository(ctx, tx, id, repo); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO repository_access (installation_id,repository_id) VALUES ($1,$2)
+    ON CONFLICT (installation_id,repository_id) DO UPDATE SET active=TRUE`, id, repo.GetID()); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
-
+	h.broadcastLifecycle(ctx, eventType)
 	return nil
 }
 
 func (h *InstallationHandler) handleRepositoriesRemoved(ctx context.Context, event github.InstallationRepositoriesEvent) error {
-	logger := clog.FromContext(ctx)
+	id := event.GetInstallation().GetID()
+	if err := h.withInstallation(ctx, id, func(tx *sql.Tx, _ bool) error {
+		for _, repo := range event.RepositoriesRemoved {
+			if repo.GetID() <= 0 {
+				return errors.New("missing repository ID")
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO repository_access (installation_id,repository_id,active) VALUES ($1,$2,FALSE)
+    ON CONFLICT (installation_id,repository_id) DO UPDATE SET active=FALSE`, id, repo.GetID()); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM repositories WHERE id=$1 AND (installation_id=$2 OR installation_id IS NULL)`, repo.GetID(), id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	h.broadcastLifecycle(ctx, "repositories_removed")
+	return nil
+}
 
-	// Optionally: Remove or mark as inactive
-	logger.Info("Repositories removed from installation",
-		"count", len(event.RepositoriesRemoved))
-
+func (h *InstallationHandler) broadcastLifecycle(ctx context.Context, eventType string) {
 	if h.WSHub != nil {
-		if err := h.WSHub.Broadcast("repositories_removed", map[string]interface{}{
-			"count": len(event.RepositoriesRemoved),
-		}); err != nil {
-			logger.Warn("Failed to broadcast repositories removed", "error", err)
+		if err := h.WSHub.Broadcast(eventType, nil); err != nil {
+			clog.FromContext(ctx).Warn("Failed to broadcast installation update", "error", err)
 		}
 	}
-
-	return nil
 }

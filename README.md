@@ -81,3 +81,11 @@ failed completed checks, expressed as a percentage; `last_failure` refers only
 to failing checks. Database regression tests run when
 `DASHBOARD_TEST_DATABASE_URL` points to a loopback database whose name ends in
 `_test`; each test creates and removes its own schema.
+
+Repository removal and App uninstall delete tracked repositories and cascade to
+stored runs, jobs and checks. Installation/access tombstones prevent delayed run
+events from recreating removed data; repository-added events restore access.
+Lifecycle changes and event persistence are transactional and duplicate deliveries
+are idempotent. Older run/check updates cannot overwrite newer completion data.
+Existing rows gain installation ownership on a subsequent webhook; uninstall
+cannot identify legacy rows that have never received an installation ID.
