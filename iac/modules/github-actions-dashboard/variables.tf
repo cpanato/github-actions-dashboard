@@ -92,7 +92,7 @@ variable "deletion_protection" {
 variable "database_tier" {
   description = "Cloud SQL machine tier."
   type        = string
-  default     = "db-custom-1-3840"
+  default     = "db-f1-micro"
 }
 
 variable "database_disk_size" {

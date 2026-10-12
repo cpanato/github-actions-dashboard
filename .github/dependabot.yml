@@ -25,3 +25,19 @@ updates:
         update-types:
           - minor
           - patch
+  - package-ecosystem: "terraform"
+    directories:
+      - "/iac/modules/github-actions-dashboard"
+      - "/iac/examples/gcp"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      routine-updates:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
