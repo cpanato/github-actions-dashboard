@@ -3,6 +3,11 @@ output "service_account_email" {
   value       = google_service_account.gh_dashboard_sa.email
 }
 
+output "service_account_unique_id" {
+  description = "Runtime service account unique ID."
+  value       = google_service_account.gh_dashboard_sa.unique_id
+}
+
 output "service_urls" {
   description = "Cloud Run URLs by region."
   value       = module.gh_dashboard_service.uris

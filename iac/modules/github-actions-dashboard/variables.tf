@@ -83,6 +83,12 @@ variable "notification_channels" {
   default     = []
 }
 
+variable "enable_otel_sidecar" {
+  description = "Enable the upstream OpenTelemetry sidecar."
+  type        = bool
+  default     = false
+}
+
 variable "deletion_protection" {
   description = "Protect Cloud SQL and Cloud Run from accidental deletion."
   type        = bool

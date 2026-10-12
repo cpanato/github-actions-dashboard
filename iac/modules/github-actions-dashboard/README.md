@@ -30,7 +30,8 @@ has no credential inputs and exports no secret values.
   Cloud Run runs one always-on instance because sessions and realtime state are in
   memory. It allows public invocation for OAuth and GitHub webhooks; the app checks
   authentication on dashboard routes. The optional upstream telemetry sidecar is
-  disabled, so deployment does not require its additional image/configuration.
+  disabled by default; set `enable_otel_sidecar` to enable it with the required
+  image/configuration.
 
 ## Secret bootstrap
 
