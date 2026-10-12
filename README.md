@@ -140,7 +140,10 @@ SQL and Secret Manager containers; GitHub secret values are uploaded separately.
 
 Dashboard pages and data APIs require an authorized session outside demo mode.
 API requests return JSON; `HX-Request: true` returns HTML partials for repositories,
-workflows, analytics and flaky checks. Trends always returns JSON.
+workflows, analytics and flaky checks. Trends and webhook metrics always return JSON.
+`GET /api/webhooks/metrics` reports inbox state, claim/failure totals, expired
+leases and oldest pending age; it requires the same authorized session. See
+[metrics definitions and operational checks](docs/WEBHOOK_METRICS.md).
 
 | Route | Parameters / behavior |
 | --- | --- |
