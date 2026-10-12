@@ -131,6 +131,11 @@ next process. See [webhook operations](docs/WEBHOOKS.md). Cloud Run
 and other deployments must provision the database connection and secrets separately.
 `make ko-local` builds a local image; the repository does not provide a deploy target.
 
+For GCP, use the reusable [Terraform module](iac/modules/github-actions-dashboard/README.md)
+and its [caller example](iac/examples/gcp/main.tf). Keep deployment-specific values
+in the ignored `iac/gcp/` directory. The module provisions Cloud Run, private Cloud
+SQL and Secret Manager containers; GitHub secret values are uploaded separately.
+
 ## Pages and APIs
 
 Dashboard pages and data APIs require an authorized session outside demo mode.
