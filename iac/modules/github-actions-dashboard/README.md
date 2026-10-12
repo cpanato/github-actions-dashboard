@@ -2,7 +2,7 @@
 
 Deploys the dashboard on Cloud Run with private networking, Cloud SQL PostgreSQL,
 a Cloud SQL proxy, a runtime service account and Secret Manager resources. It uses
-the same Chainguard infrastructure modules (`1.59.3`) as the local deployment.
+Chainguard infrastructure modules (`1.59.3`).
 Providers and deployment-specific inputs are configured by the caller.
 
 The reusable module declares minimum tested provider versions with `>=`. The
@@ -51,8 +51,8 @@ For a new environment:
    client secret using Secret Manager. Upload from local files or stdin, outside
    Terraform. The container IDs are `gh-dashboard-webhook-secret`,
    `gh-dashboard-gh-private-key-secret`, `gh-dashboard-gh-oauth-client-id-secret`
-   and `gh-dashboard-gh-oauth-client-secret`. These existing names are retained;
-   use one module deployment per project.
+   and `gh-dashboard-gh-oauth-client-secret`.
+   Use one module deployment per project.
 3. Run a full `terraform plan` and review it before `terraform apply`.
 4. Set the GitHub App webhook to `<public_url>/api/github/hook` and its OAuth
    callback to `<public_url>/login/callback`.
@@ -60,46 +60,3 @@ For a new environment:
 The runtime reads the latest version of each secret. Redeploy Cloud Run after
 rotating secrets supplied as environment variables. Supply the actual external
 HTTPS origin as `public_url`; the module does not derive a region-specific URL.
-
-## Existing local deployment
-
-`iac/gcp/` remains ignored and is not changed by adding this module. Switching an
-existing caller to `module.dashboard` changes Terraform addresses. Back up its
-state and add caller-side `moved` blocks before applying. Do not apply a plan that
-destroys and recreates the existing resources.
-
-Move each existing top-level address below to `module.dashboard.<same address>`:
-
-```text
-module.networking
-module.gh_dashboard_webhook_secret
-module.gh_dashboard_gh_private_key_secret
-module.gh_dashboard_gh_oauth_client_id_secret
-module.gh_dashboard_gh_oauth_client_secret
-module.gh_dashboard_service
-google_service_account.gh_dashboard_sa
-google_project_iam_member.gh_dashboard_cloudsql_client
-random_password.db_password
-google_secret_manager_secret.db_password
-google_secret_manager_secret_version.db_password
-google_secret_manager_secret_iam_member.db_password_access
-google_sql_database_instance.gh_dashboard
-google_compute_global_address.private_ip_address
-google_service_networking_connection.private_vpc_connection
-google_sql_database.dashboard
-google_sql_user.dashboard
-```
-
-For example:
-
-```hcl
-moved {
-  from = google_sql_database_instance.gh_dashboard
-  to   = module.dashboard.google_sql_database_instance.gh_dashboard
-}
-```
-
-Retain the existing project, names, region, database settings and secret versions.
-Review the plan for upstream placeholder-version removal, enabled deletion
-protection and disabled telemetry sidecar. These differ from the local baseline.
-The existing secret payloads must already have real versions before migration.
