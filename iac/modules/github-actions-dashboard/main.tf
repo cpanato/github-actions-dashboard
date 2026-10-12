@@ -239,7 +239,7 @@ module "gh_dashboard_service" {
 
   // Sessions and the realtime hub are in memory, so run a
   // single always-on instance.
-  enable_otel_sidecar = false
+  enable_otel_sidecar = var.enable_otel_sidecar
 
   scaling = {
     min_instances = 1
