@@ -1,7 +1,7 @@
 // Create a network with several regional subnets
 module "networking" {
   source  = "chainguard-dev/common/infra//modules/networking"
-  version = "1.59.3"
+  version = "1.65.0"
 
   name                        = var.name
   project_id                  = var.project_id
@@ -29,7 +29,7 @@ resource "google_project_iam_member" "gh_dashboard_cloudsql_client" {
 
 module "gh_dashboard_webhook_secret" {
   source  = "chainguard-dev/common/infra//modules/secret"
-  version = "1.59.3"
+  version = "1.65.0"
 
   project_id = var.project_id
   name       = "gh-dashboard-webhook-secret"
@@ -45,7 +45,7 @@ module "gh_dashboard_webhook_secret" {
 
 module "gh_dashboard_gh_private_key_secret" {
   source  = "chainguard-dev/common/infra//modules/secret"
-  version = "1.59.3"
+  version = "1.65.0"
 
   project_id       = var.project_id
   name             = "gh-dashboard-gh-private-key-secret"
@@ -60,7 +60,7 @@ module "gh_dashboard_gh_private_key_secret" {
 
 module "gh_dashboard_gh_oauth_client_id_secret" {
   source  = "chainguard-dev/common/infra//modules/secret"
-  version = "1.59.3"
+  version = "1.65.0"
 
   project_id = var.project_id
   name       = "gh-dashboard-gh-oauth-client-id-secret"
@@ -76,7 +76,7 @@ module "gh_dashboard_gh_oauth_client_id_secret" {
 
 module "gh_dashboard_gh_oauth_client_secret" {
   source  = "chainguard-dev/common/infra//modules/secret"
-  version = "1.59.3"
+  version = "1.65.0"
 
   project_id = var.project_id
   name       = "gh-dashboard-gh-oauth-client-secret"
@@ -92,7 +92,7 @@ module "gh_dashboard_gh_oauth_client_secret" {
 
 module "gh_dashboard_service" {
   source  = "chainguard-dev/common/infra//modules/regional-go-service"
-  version = "1.59.3"
+  version = "1.65.0"
 
   deletion_protection = var.deletion_protection
   team                = var.team
