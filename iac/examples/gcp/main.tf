@@ -4,11 +4,11 @@ terraform {
   required_providers {
     google = {
       source  = "hashicorp/google"
-      version = "8.9.0"
+      version = "8.10.0"
     }
     google-beta = {
       source  = "hashicorp/google-beta"
-      version = "8.9.0"
+      version = "8.10.0"
     }
     random = {
       source  = "hashicorp/random"
@@ -20,7 +20,7 @@ terraform {
     }
     cosign = {
       source  = "chainguard-dev/cosign"
-      version = "0.5.8"
+      version = "0.5.10"
     }
   }
 }
