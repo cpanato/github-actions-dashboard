@@ -9,7 +9,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/lib/pq v1.12.3
 	github.com/palantir/go-baseapp v0.7.1
-	github.com/palantir/go-githubapp v0.49.0
+	github.com/palantir/go-githubapp v0.50.0
 	github.com/pkg/errors v0.9.1
 	gopkg.in/yaml.v2 v2.4.0
 )
